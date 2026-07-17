@@ -75,6 +75,17 @@ export interface SprintView {
   completion: CompletionCalculation | null;
   /** Ids of Sprint issues with no Original Effort (UI warning list). */
   issuesMissingOriginalEffort: string[];
+
+  /** Per-assignee effort (keyed by user id) for per-person planning load. */
+  assignedEffort: Record<string, AssigneeEffortView>;
+  /** Effort on issues left unassigned (preserving project-direction ownership). */
+  unassignedEffort: AssigneeEffortView;
+}
+
+/** Effort attributed to one assignee (or the unassigned bucket), in minutes. */
+export interface AssigneeEffortView {
+  originalEffortMinutes: number;
+  currentEffortMinutes: number;
 }
 
 export interface BoardSummary {

@@ -277,10 +277,11 @@ export class ApiClient {
     );
   }
 
-  resetUserCapacity(sprintId: string, userId: string): Promise<SprintView> {
+  resetUserCapacity(sprintId: string, userId: string, expectedRevision: number): Promise<SprintView> {
     return this.request<SprintView>(
       'POST',
       `/sprints/${encodeURIComponent(sprintId)}/capacity/${encodeURIComponent(userId)}/reset`,
+      { expectedRevision },
     );
   }
 

@@ -148,6 +148,8 @@ describe('aggregateEffort', () => {
       currentEffortMinutes: 120,
       completedOriginalEffortMinutes: 200,
       issuesMissingOriginalEffort: ['C'],
+      byAssignee: {},
+      unassigned: { originalEffortMinutes: 300, currentEffortMinutes: 120 },
     });
   });
 
@@ -157,7 +159,48 @@ describe('aggregateEffort', () => {
       currentEffortMinutes: 0,
       completedOriginalEffortMinutes: 0,
       issuesMissingOriginalEffort: [],
+      byAssignee: {},
+      unassigned: { originalEffortMinutes: 0, currentEffortMinutes: 0 },
     });
+  });
+
+  it('breaks effort down per assignee and into an unassigned bucket', () => {
+    const r = aggregateEffort(
+      [
+        issue({ id: 'A', originalEffortMinutes: 100, currentEffortMinutes: 80, assigneeId: '1-1' }),
+        issue({ id: 'B', originalEffortMinutes: 200, currentEffortMinutes: 120, assigneeId: '1-1' }),
+        issue({ id: 'C', originalEffortMinutes: 50, currentEffortMinutes: 40, assigneeId: '1-2' }),
+        issue({ id: 'D', originalEffortMinutes: 70, currentEffortMinutes: 60, assigneeId: null }),
+        issue({ id: 'E', originalEffortMinutes: 30, currentEffortMinutes: 20 }), // no assignee field
+      ],
+      START,
+      FINISH,
+    );
+    expect(r.byAssignee).toEqual({
+      '1-1': { originalEffortMinutes: 300, currentEffortMinutes: 200 },
+      '1-2': { originalEffortMinutes: 50, currentEffortMinutes: 40 },
+    });
+    // Both explicit null and an absent assignee land in the unassigned bucket.
+    expect(r.unassigned).toEqual({ originalEffortMinutes: 100, currentEffortMinutes: 80 });
+  });
+
+  it('a resolved assigned issue contributes 0 current effort to its assignee', () => {
+    const r = aggregateEffort(
+      [
+        issue({
+          id: 'A',
+          originalEffortMinutes: 100,
+          currentEffortMinutes: 999,
+          resolved: true,
+          resolvedAt: MID,
+          assigneeId: '1-1',
+        }),
+      ],
+      START,
+      FINISH,
+    );
+    // Original still attributed to the assignee; current is 0 because it is resolved.
+    expect(r.byAssignee['1-1']).toEqual({ originalEffortMinutes: 100, currentEffortMinutes: 0 });
   });
 
   it('throws RangeError on negative original effort', () => {

@@ -6,6 +6,7 @@
 import {
   aggregateEffort,
   confirmedCapacityMinutes,
+  endOfDayUtcMs,
   isoToUtcMs,
   observedFocusFactor,
   plannedCapacityMinutes,
@@ -14,6 +15,11 @@ import {
 } from '../../domain/index.js';
 import type { CapacityDocument, CompletionCalculation } from '../../shared/types.js';
 import type { YtIssue } from '../repositories/youtrack-client.js';
+
+export interface AssigneeEffort {
+  originalEffortMinutes: number;
+  currentEffortMinutes: number;
+}
 
 export interface ComputedMetrics {
   rawCapacityMinutes: number;
@@ -24,6 +30,10 @@ export interface ComputedMetrics {
   completedOriginalEffortMinutes: number;
   observedFocusFactor: number | null;
   issuesMissingOriginalEffort: string[];
+  /** Per-assignee effort (keyed by user id) for per-person planning load. */
+  assignedEffort: Record<string, AssigneeEffort>;
+  /** Effort on issues left unassigned. */
+  unassignedEffort: AssigneeEffort;
 }
 
 /** Map a transport issue to the domain effort issue. */
@@ -34,6 +44,7 @@ function toEffortIssue(issue: YtIssue): EffortIssue {
     currentEffortMinutes: issue.currentEffortMinutes,
     resolved: issue.resolved,
     resolvedAt: issue.resolvedAt,
+    assigneeId: issue.assigneeId,
   };
 }
 
@@ -54,7 +65,8 @@ export function computeMetrics(
   focusFactor: number,
 ): ComputedMetrics {
   const startMs = isoToUtcMs(start);
-  const finishMs = isoToUtcMs(finish);
+  // Inclusive of the whole finish day, so work resolved on the last Sprint day counts.
+  const finishMs = endOfDayUtcMs(finish);
   const raw = capacity ? rawCapacityMinutes(capacity) : 0;
   const confirmed = capacity ? confirmedCapacityMinutes(capacity) : 0;
   const effort = aggregateEffort(issues.map(toEffortIssue), startMs, finishMs);
@@ -67,6 +79,8 @@ export function computeMetrics(
     completedOriginalEffortMinutes: effort.completedOriginalEffortMinutes,
     observedFocusFactor: observedFocusFactor(effort.completedOriginalEffortMinutes, raw),
     issuesMissingOriginalEffort: effort.issuesMissingOriginalEffort,
+    assignedEffort: effort.byAssignee,
+    unassignedEffort: effort.unassigned,
   };
 }
 
@@ -82,7 +96,7 @@ export function buildCompletion(
     version: 1,
     calculatedAt,
     sprintStart: isoToUtcMs(start),
-    sprintFinish: isoToUtcMs(finish),
+    sprintFinish: endOfDayUtcMs(finish),
     rawCapacityMinutes: metrics.rawCapacityMinutes,
     originalEffortMinutes: metrics.originalEffortMinutes,
     completedOriginalEffortMinutes: metrics.completedOriginalEffortMinutes,

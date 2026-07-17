@@ -26,6 +26,11 @@ export function EffortSummary({ sprint, hoursPerDay }: EffortSummaryProps): Reac
       value: formatFocusFactor(sprint.observedFocusFactor),
       hint: 'Completed original effort ÷ raw capacity',
     },
+    {
+      label: 'Unassigned',
+      value: formatDays(sprint.unassignedEffort.currentEffortMinutes, hoursPerDay),
+      hint: 'Current effort on tasks with no assignee — spread it across the team or leave it owned',
+    },
   ];
 
   const missing = sprint.issuesMissingOriginalEffort;

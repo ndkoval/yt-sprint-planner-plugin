@@ -31,6 +31,14 @@ export function isoToUtcMs(iso: IsoDate): number {
   return ms;
 }
 
+/**
+ * Last instant (23:59:59.999 UTC) of a yyyy-mm-dd day. Used as the inclusive upper
+ * bound for "resolved within the Sprint": work closed any time on the finish day counts.
+ */
+export function endOfDayUtcMs(iso: IsoDate): number {
+  return isoToUtcMs(iso) + (24 * 60 * 60 * 1000 - 1);
+}
+
 /** Format a UTC-midnight epoch ms as yyyy-mm-dd. */
 export function utcMsToIso(ms: number): IsoDate {
   const d = new Date(ms);

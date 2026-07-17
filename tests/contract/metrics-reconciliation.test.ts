@@ -51,6 +51,61 @@ describe('effort aggregation via recalculate', () => {
     expect(view.issuesMissingOriginalEffort).toEqual(['B']);
     expect(view.rawCapacityMinutes).toBe(9600);
   });
+
+  it('counts work resolved during the finish DAY (end-of-day inclusive)', async () => {
+    const fake = seedWorld();
+    fake.currentUserId = MANAGER.id;
+    fake.seedManagedSprint({
+      boardId: BOARD_ID,
+      sprint: SPRINT, // finishes 2026-03-13
+      projectId: PROJECT_ID,
+      sequence: 5,
+      focusFactor: 0.7,
+      capacity: capacity(),
+      issues: [
+        // Resolved at 14:00 on the finish day — must count (window is inclusive of the day).
+        { id: 'A', originalEffortMinutes: 1000, currentEffortMinutes: 0, resolved: true, resolvedAt: Date.UTC(2026, 2, 13, 14, 0) },
+        // Resolved just after midnight the day AFTER finish — must NOT count.
+        { id: 'B', originalEffortMinutes: 500, currentEffortMinutes: 0, resolved: true, resolvedAt: Date.UTC(2026, 2, 14, 0, 1) },
+      ],
+    });
+
+    await request(app(fake), 'POST', '/sprints/sprint-1/recalculate');
+    const view = (await request(app(fake), 'GET', '/sprints/sprint-1')).body as SprintView;
+    expect(view.completedOriginalEffortMinutes).toBe(1000);
+  });
+
+  it('breaks effort down per assignee with an unassigned bucket', async () => {
+    const fake = seedWorld();
+    fake.currentUserId = MANAGER.id;
+    fake.seedManagedSprint({
+      boardId: BOARD_ID,
+      sprint: SPRINT,
+      projectId: PROJECT_ID,
+      sequence: 5,
+      focusFactor: 0.7,
+      capacity: capacity(),
+      issues: [
+        { id: 'A', originalEffortMinutes: 6000, currentEffortMinutes: 3000, resolved: false, resolvedAt: null, assigneeId: MEMBER.id },
+        { id: 'B', originalEffortMinutes: 2000, currentEffortMinutes: 1200, resolved: false, resolvedAt: null, assigneeId: MEMBER.id },
+        { id: 'C', originalEffortMinutes: 1500, currentEffortMinutes: 900, resolved: false, resolvedAt: null, assigneeId: MEMBER_2.id },
+        { id: 'D', originalEffortMinutes: 800, currentEffortMinutes: 400, resolved: false, resolvedAt: null, assigneeId: null },
+      ],
+    });
+
+    await request(app(fake), 'POST', '/sprints/sprint-1/recalculate');
+    const view = (await request(app(fake), 'GET', '/sprints/sprint-1')).body as SprintView;
+
+    expect(view.assignedEffort[MEMBER.id]).toEqual({
+      originalEffortMinutes: 8000,
+      currentEffortMinutes: 4200,
+    });
+    expect(view.assignedEffort[MEMBER_2.id]).toEqual({
+      originalEffortMinutes: 1500,
+      currentEffortMinutes: 900,
+    });
+    expect(view.unassignedEffort).toEqual({ originalEffortMinutes: 800, currentEffortMinutes: 400 });
+  });
 });
 
 describe('reconciliation corrects a corrupted cache', () => {

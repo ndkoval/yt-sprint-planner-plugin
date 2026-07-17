@@ -88,11 +88,15 @@ export class CapacityService {
     sprintId: string,
     doc: CapacityDocument,
     currentRevision: number,
+    expectedRevision: number,
     targetUserId: UserId,
     principal: Principal,
   ): Promise<CapacityMutationResult> {
     if (!canEditCapacityRow(principal, { targetUserId })) {
       throw forbidden('You can only reset your own availability.');
+    }
+    if (expectedRevision !== currentRevision) {
+      throw capacityConflict();
     }
     const existing = doc.rows[targetUserId];
     if (!existing) throw notFound(`Capacity row for user ${targetUserId}`);

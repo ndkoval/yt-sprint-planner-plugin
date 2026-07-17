@@ -42,6 +42,8 @@ export interface YtIssue {
   resolved: boolean;
   /** UTC ms the issue was resolved, or null. */
   resolvedAt: number | null;
+  /** Stable user id of the assignee, or null/absent when the task is unassigned. */
+  assigneeId?: string | null | undefined;
 }
 
 export interface YtCustomField {

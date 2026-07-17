@@ -4,6 +4,20 @@ All notable changes to the Sprint Capacity Planner are documented here. The form
 
 ## [Unreleased]
 
+### Added (per-assignee planning)
+
+- **Assign tasks to people while planning, with an Unassigned bucket.** Effort now rolls up per assignee (the issue's Assignee) as well as in total. The capacity table shows each person's **Assigned** load (with an over-capacity ⚠ when it exceeds their available days), and the effort summary shows the **Unassigned** remainder — so you can balance the team while leaving work owned by project direction rather than forced onto a person. Assigned load updates automatically as issues change. New `assigneeId` on issues; `aggregateEffort` returns `byAssignee` + `unassigned`; `SprintView` gains `assignedEffort` + `unassignedEffort`. Covered by unit + contract tests and the `09-assignment` demo.
+
+### Added (marketing)
+
+- **Two more marketing reels:** `00c-team-configuration-reel` (board / effort fields / schedule / naming / team / save) and `00d-installation-reel` (install from one ZIP → attach → open settings, over a simulated YouTrack install screen). Both cursored + subtitled (WebVTT), bringing the reel set to four.
+
+### Fixed
+
+- **Completed-effort window was ~24h short (audit).** The "resolved within the Sprint" upper bound used midnight of the finish day, so work closed on the last Sprint day was excluded from Completed Original Effort — understating Observed Focus Factor and mis-calibrating the next Sprint. Now inclusive of the whole finish day (`endOfDayUtcMs`), with unit + contract tests.
+- **Capacity reset / confirm / unconfirm now enforce optimistic concurrency (audit).** They previously bypassed the revision check (last-write-wins); they now require `expectedRevision` and return `409` on a stale revision, like `PATCH capacity`.
+- **`PUT /config` returned only `{ configRevision }`** but the widget expects a full `ConfigResponse`; it set the live config to `undefined` and the settings form never showed "Settings saved." Now returns the full response (caught by the team-configuration reel).
+
 ### Changed
 
 - **Everyone is planned at 100% — per-person allocation removed** from the config, capacity rows, schemas, domain, and UI (settings team table + capacity table). Default capacity is `workingDays × hoursPerDay × 60`.

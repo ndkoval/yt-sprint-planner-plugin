@@ -1,6 +1,7 @@
 import React from 'react';
 import Input, { Size as InputSize } from '@jetbrains/ring-ui-built/components/input/input';
 import Checkbox from '@jetbrains/ring-ui-built/components/checkbox/checkbox';
+import type { AssigneeEffortView } from '../../shared/api';
 import type { CapacityRow } from '../../shared/types';
 import { formatDaysValue } from '../../shared/units';
 import { formatTimestamp } from './format';
@@ -16,6 +17,8 @@ export interface CapacityTableProps {
   hoursPerDay: number;
   isManager: boolean;
   currentUserId: string;
+  /** Per-assignee effort (keyed by user id) so each row shows its assigned load. */
+  assignedEffort: Record<string, AssigneeEffortView>;
   /** Draft overrides keyed by userId; falls back to the persisted value when absent. */
   drafts: Record<string, RowDraft>;
   savingUserIds: ReadonlySet<string>;
@@ -51,6 +54,7 @@ export function CapacityTable({
   hoursPerDay,
   isManager,
   currentUserId,
+  assignedEffort,
   drafts,
   savingUserIds,
   onAvailableInput,
@@ -75,6 +79,9 @@ export function CapacityTable({
           </th>
           <th style={headStyle} scope="col">
             Available
+          </th>
+          <th style={headStyle} scope="col">
+            Assigned
           </th>
           <th style={headStyle} scope="col">
             Confirmed
@@ -123,6 +130,23 @@ export function CapacityTable({
                 ) : (
                   formatDaysValue(row.availableMinutes, hoursPerDay)
                 )}
+              </td>
+              <td style={cellStyle}>
+                {(() => {
+                  const assignedMinutes = assignedEffort[row.userId]?.currentEffortMinutes ?? 0;
+                  const over = assignedMinutes > row.availableMinutes;
+                  return (
+                    <span
+                      title={
+                        over ? 'Assigned work exceeds this person’s available capacity' : undefined
+                      }
+                      style={over ? { color: 'var(--ring-error-color, #c0341d)', fontWeight: 'bold' } : undefined}
+                    >
+                      {formatDaysValue(assignedMinutes, hoursPerDay)}
+                      {over ? ' ⚠' : ''}
+                    </span>
+                  );
+                })()}
               </td>
               <td style={cellStyle}>
                 <Checkbox

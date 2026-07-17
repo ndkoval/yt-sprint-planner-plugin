@@ -113,6 +113,66 @@ function boardStubHtml(): string {
 </body></html>`;
 }
 
+/**
+ * A simulated YouTrack "Install app" admin screen for the installation demo reel. It
+ * mirrors the real flow — upload the packaged ZIP, install, attach to a project, open
+ * settings — without needing a live YouTrack (which can't run its scripting engine on
+ * this platform). Clearly labelled as a simulation.
+ */
+function installStubHtml(): string {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/><title>Install app — YouTrack (simulated)</title>
+<style>
+  body{font:14px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;padding:28px;color:#1f2326;background:#f7f8fa}
+  .sim{position:fixed;top:10px;right:14px;font-size:11px;color:#8a8d90;letter-spacing:.04em}
+  h1{font-size:20px;margin:0 0 2px} .sub{color:#737577;margin:0 0 22px}
+  .card{background:#fff;border:1px solid #dfe1e6;border-radius:10px;padding:20px;max-width:640px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f0f1f3}
+  .row:last-child{border-bottom:0}
+  .key{color:#737577} .val{font-weight:600}
+  .drop{margin:16px 0;padding:22px;border:2px dashed #c3c7cd;border-radius:10px;text-align:center;color:#737577}
+  button{font:inherit;font-weight:600;color:#fff;background:#1a73e8;border:0;border-radius:8px;padding:9px 16px;cursor:pointer}
+  button.secondary{background:#fff;color:#1a73e8;border:1px solid #1a73e8}
+  .status{margin-top:14px;font-weight:600}
+  .ok{color:#3a923a}
+  a{color:#1a73e8;text-decoration:none;font-weight:600}
+</style></head>
+<body>
+  <div class="sim">simulated install screen</div>
+  <h1>Install app</h1>
+  <p class="sub">Administration → Apps → Install app from ZIP</p>
+  <div class="card">
+    <div class="row"><span class="key">App</span><span class="val">Sprint Capacity Planner</span></div>
+    <div class="row"><span class="key">Version</span><span class="val">0.1.0</span></div>
+    <div class="row"><span class="key">Package</span><span class="val">dist/sprint-capacity-planner.zip</span></div>
+    <div class="row"><span class="key">Scopes</span><span class="val">Agile.Read, Agile.Update, Issue.Read, Project.Read</span></div>
+    <div class="drop" id="drop">Drop <b>sprint-capacity-planner.zip</b> here, or</div>
+    <div style="display:flex;gap:10px;align-items:center">
+      <button id="install">Install</button>
+      <button class="secondary" id="attach" style="display:none">Attach to project “AppGlass”</button>
+      <a id="open" href="/project-settings/index.html?projectId=proj-demo&as=manager" style="display:none">Open Sprint Capacity Settings →</a>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+<script>
+(function(){
+  var status=document.getElementById('status');
+  document.getElementById('install').addEventListener('click',function(){
+    this.disabled=true; status.textContent='Installing…';
+    setTimeout(function(){
+      status.innerHTML='<span class="ok">✓ Installed — Sprint Capacity Planner 0.1.0</span>';
+      document.getElementById('attach').style.display='';
+    },600);
+  });
+  document.getElementById('attach').addEventListener('click',function(){
+    this.disabled=true; status.innerHTML='<span class="ok">✓ Installed and attached to “AppGlass”</span>';
+    document.getElementById('open').style.display='';
+  });
+})();
+</script>
+</body></html>`;
+}
+
 function injectHostShim(html: string): string {
   const shim = `<script>(function(){
     var as = new URLSearchParams(location.search).get('as') || 'manager';
@@ -149,7 +209,12 @@ export async function startMockServer(port: number): Promise<{ close: () => Prom
    * added/estimated on the board. Lets the E2E prove that remaining capacity updates
    * without any manual action in the app.
    */
-  async function demoAddIssue(sprintId: string, originalMinutes: number, currentMinutes: number) {
+  async function demoAddIssue(
+    sprintId: string,
+    originalMinutes: number,
+    currentMinutes: number,
+    assigneeId: string | null,
+  ) {
     const existing = await world.getSprintIssues(DEMO.boardId, sprintId, '', '');
     demoIssueSeq += 1;
     world.seedIssues(DEMO.boardId, sprintId, [
@@ -160,6 +225,7 @@ export async function startMockServer(port: number): Promise<{ close: () => Prom
         currentEffortMinutes: currentMinutes,
         resolved: false,
         resolvedAt: null,
+        assigneeId,
       },
     ]);
     const config = (await new ConfigRepository(world, DEMO.projectId).load()).config;
@@ -212,6 +278,13 @@ export async function startMockServer(port: number): Promise<{ close: () => Prom
       return;
     }
 
+    // ---- Install stub: the simulated "Install app" admin screen for the install reel. ----
+    if (url.pathname === '/install') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(installStubHtml());
+      return;
+    }
+
     // ---- Board stub: what "Open board" opens. Lists each Sprint's issues and links
     // back into the planner for that Sprint (so you can "go to a Sprint from there"). ----
     if (url.pathname.startsWith('/agiles/')) {
@@ -225,7 +298,8 @@ export async function startMockServer(port: number): Promise<{ close: () => Prom
       const sprintId = url.searchParams.get('sprintId') ?? 'sprint-2';
       const original = Number(url.searchParams.get('originalMinutes') ?? 2400);
       const current = Number(url.searchParams.get('currentMinutes') ?? 2400);
-      await serialise(() => demoAddIssue(sprintId, original, current));
+      const as = url.searchParams.get('assigneeId');
+      await serialise(() => demoAddIssue(sprintId, original, current, as && as.length > 0 ? as : null));
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
       return;

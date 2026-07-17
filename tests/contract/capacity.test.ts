@@ -117,26 +117,52 @@ describe('confirm / unconfirm / reset', () => {
     const fake = setup();
     fake.currentUserId = MEMBER.id;
     const confirmed = (
-      await request(app(fake), 'POST', '/sprints/sprint-1/capacity/me/confirm')
+      await request(app(fake), 'POST', '/sprints/sprint-1/capacity/me/confirm', {
+        body: { expectedRevision: 1 },
+      })
     ).body as CapacityResponse;
     expect(confirmed.capacity.rows[MEMBER.id]!.confirmed).toBe(true);
 
     const unconfirmed = (
-      await request(app(fake), 'POST', '/sprints/sprint-1/capacity/me/unconfirm')
+      await request(app(fake), 'POST', '/sprints/sprint-1/capacity/me/unconfirm', {
+        body: { expectedRevision: confirmed.capacityRevision },
+      })
     ).body as CapacityResponse;
     expect(unconfirmed.capacity.rows[MEMBER.id]!.confirmed).toBe(false);
+  });
+
+  it('rejects a stale revision on confirm with 409', async () => {
+    const fake = setup();
+    fake.currentUserId = MEMBER.id;
+    const res = await request(app(fake), 'POST', '/sprints/sprint-1/capacity/me/confirm', {
+      body: { expectedRevision: 99 },
+    });
+    expect(res.status).toBe(409);
   });
 
   it('resets a customised row back to its default', async () => {
     const fake = setup();
     fake.currentUserId = MEMBER.id;
-    await request(app(fake), 'PATCH', '/sprints/sprint-1/capacity/me', {
-      body: { expectedRevision: 1, availableMinutes: 3000 },
-    });
+    const patched = (
+      await request(app(fake), 'PATCH', '/sprints/sprint-1/capacity/me', {
+        body: { expectedRevision: 1, availableMinutes: 3000 },
+      })
+    ).body as CapacityResponse;
     const reset = (
-      await request(app(fake), 'POST', `/sprints/sprint-1/capacity/${MEMBER.id}/reset`)
+      await request(app(fake), 'POST', `/sprints/sprint-1/capacity/${MEMBER.id}/reset`, {
+        body: { expectedRevision: patched.capacityRevision },
+      })
     ).body as CapacityResponse;
     expect(reset.capacity.rows[MEMBER.id]!.availableMinutes).toBe(4800);
     expect(reset.capacity.rows[MEMBER.id]!.availableWasCustomized).toBe(false);
+  });
+
+  it('rejects a stale revision on reset with 409', async () => {
+    const fake = setup();
+    fake.currentUserId = MEMBER.id;
+    const res = await request(app(fake), 'POST', `/sprints/sprint-1/capacity/${MEMBER.id}/reset`, {
+      body: { expectedRevision: 99 },
+    });
+    expect(res.status).toBe(409);
   });
 });

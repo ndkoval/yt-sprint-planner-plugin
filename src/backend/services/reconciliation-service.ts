@@ -132,5 +132,7 @@ function emptyMetrics(): ComputedMetrics {
     completedOriginalEffortMinutes: 0,
     observedFocusFactor: null,
     issuesMissingOriginalEffort: [],
+    assignedEffort: {},
+    unassignedEffort: { originalEffortMinutes: 0, currentEffortMinutes: 0 },
   };
 }

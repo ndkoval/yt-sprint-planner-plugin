@@ -445,6 +445,7 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
               hoursPerDay={hoursPerDay}
               isManager={isManager}
               currentUserId={currentUserId ?? ''}
+              assignedEffort={sprint.assignedEffort}
               drafts={drafts}
               savingUserIds={savingUserIds}
               onAvailableInput={(userId, days) => updateDraft(userId, { availableDays: days })}

@@ -18,6 +18,7 @@ A YouTrack App that adds **capacity planning, computed delivery metrics, and a o
 | Per-person capacity planning per Sprint | Working-days × hours (everyone at 100%), with per-row available/confirmed/note overrides |
 | Computed capacity metrics | Default, Raw, Confirmed, Planned capacity |
 | Computed effort metrics | Original, Current, Completed Original effort, plus missing-effort warnings |
+| Per-person task planning | Assign tasks to people to see each person's load (with an over-capacity ⚠), and leave tasks **Unassigned** to preserve project-direction ownership |
 | Learned Focus Factor | Observed factor per completed Sprint; auto-calibrated next factor with bounds |
 | One-click next Sprint | Idempotent create-next flow with computed dates, name, sequence, seeded capacity |
 | Manager diagnostics + export/import | Data-health view and a versioned JSON backup bundle |
@@ -113,6 +114,8 @@ Over the issues currently in the native Sprint:
 | **Original Effort** | `Σ Original Effort` of all issues (missing → 0, added to a warning list) |
 | **Current Effort** | `Σ Current Effort` of **unresolved** issues (resolved contribute 0; missing → 0) |
 | **Completed Original Effort** | `Σ Original Effort` of issues **resolved within `[start, finish]`** |
+| **Assigned (per person)** | Per-assignee roll-up of effort; the capacity table shows each person's assigned Current Effort vs. their available days |
+| **Unassigned** | Effort on issues with no assignee — surfaced so it can be balanced across the team or left owned |
 
 A negative period value is rejected as a validation error.
 

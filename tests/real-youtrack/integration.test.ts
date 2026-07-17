@@ -87,4 +87,11 @@ describeReal('real YouTrack integration', () => {
   );
 
   it.todo('installs the packaged app and drives a backend endpoint (SPIKE: app install REST path)');
+
+  it.todo(
+    'aggregates effort per assignee with an unassigned bucket: create issues with the ' +
+      'configured effort fields, assign some to real users and leave one unassigned, add ' +
+      'them to the Sprint, then verify SprintView.assignedEffort / unassignedEffort ' +
+      '(SPIKE: Assignee field name + issue-assignee REST path)',
+  );
 });

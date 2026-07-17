@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   isoToUtcMs,
   utcMsToIso,
+  endOfDayUtcMs,
   addDays,
   isWeekday,
   countWorkingDays,
@@ -11,6 +12,20 @@ import {
 } from '../../src/domain/dates/dates.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+describe('endOfDayUtcMs', () => {
+  it('is the last millisecond of the day (inclusive finish bound)', () => {
+    const iso = '2026-07-26';
+    expect(endOfDayUtcMs(iso)).toBe(isoToUtcMs(iso) + MS_PER_DAY - 1);
+    // A timestamp at 14:00 on the day is within [start-of-day, end-of-day].
+    const noon = isoToUtcMs(iso) + 14 * 60 * 60 * 1000;
+    expect(isWithinSprint(noon, isoToUtcMs('2026-07-13'), endOfDayUtcMs(iso))).toBe(true);
+    // One ms into the next day is outside.
+    expect(
+      isWithinSprint(endOfDayUtcMs(iso) + 1, isoToUtcMs('2026-07-13'), endOfDayUtcMs(iso)),
+    ).toBe(false);
+  });
+});
 
 describe('isoToUtcMs / utcMsToIso', () => {
   it('parses a yyyy-mm-dd string to UTC midnight', () => {

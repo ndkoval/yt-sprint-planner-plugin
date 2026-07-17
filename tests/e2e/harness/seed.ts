@@ -120,10 +120,10 @@ export async function buildDemoWorld(): Promise<FakeYouTrack> {
   const charlie = s2Cap.rows[PERSONAS.charlie.id];
   if (charlie) { charlie.note = 'Conference week 2'; }
   const s2Issues: YtIssue[] = [
-    { id: 'AG-10', originalEffortMinutes: 4800, currentEffortMinutes: 2400, resolved: false, resolvedAt: null },
-    { id: 'AG-11', originalEffortMinutes: 2400, currentEffortMinutes: 0, resolved: true, resolvedAt: Date.UTC(2026, 6, 10) },
-    { id: 'AG-12', originalEffortMinutes: 3600, currentEffortMinutes: 1800, resolved: false, resolvedAt: null },
-    { id: 'AG-13', originalEffortMinutes: null, currentEffortMinutes: 600, resolved: false, resolvedAt: null }, // missing Original Effort
+    { id: 'AG-10', originalEffortMinutes: 4800, currentEffortMinutes: 2400, resolved: false, resolvedAt: null, assigneeId: PERSONAS.alice.id },
+    { id: 'AG-11', originalEffortMinutes: 2400, currentEffortMinutes: 0, resolved: true, resolvedAt: Date.UTC(2026, 6, 10), assigneeId: PERSONAS.alice.id },
+    { id: 'AG-12', originalEffortMinutes: 3600, currentEffortMinutes: 1800, resolved: false, resolvedAt: null, assigneeId: PERSONAS.bob.id },
+    { id: 'AG-13', originalEffortMinutes: null, currentEffortMinutes: 600, resolved: false, resolvedAt: null, assigneeId: null }, // missing Original Effort, unassigned
   ];
   fake.seedManagedSprint({
     boardId: DEMO.boardId,

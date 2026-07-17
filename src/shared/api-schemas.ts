@@ -29,6 +29,11 @@ export const patchCapacityRequestSchema = z
     { message: 'at least one of availableMinutes, confirmed, note is required' },
   );
 
+/** Body for capacity actions that carry only an optimistic-concurrency revision. */
+export const capacityRevisionRequestSchema = z
+  .object({ expectedRevision: z.number().int().min(0) })
+  .strict();
+
 export const createNextSprintRequestSchema = z
   .object({
     goal: z.string().max(4000).optional(),

@@ -21,6 +21,7 @@ import type {
   SprintSummary,
 } from '../shared/api.js';
 import {
+  capacityRevisionRequestSchema,
   createNextSprintRequestSchema,
   excludeCalibrationRequestSchema,
   overrideFocusFactorRequestSchema,
@@ -112,7 +113,12 @@ export function createApp(deps: AppDeps): Router {
     const reconciliation = new ReconciliationService(client, ctx.sprintRepo, clock);
     const result = await reconciliation.reconcile(record, ctx.config, ctx.boardId, ctx.principal.userId);
     const fresh = await ctx.sprintRepo.load(sprint, ctx.projectId);
-    return ok(toSprintView(fresh, result.metrics.issuesMissingOriginalEffort));
+    return ok(
+      toSprintView(fresh, result.metrics.issuesMissingOriginalEffort, {
+        assignedEffort: result.metrics.assignedEffort,
+        unassignedEffort: result.metrics.unassignedEffort,
+      }),
+    );
   };
 
   // ---- GET /config -------------------------------------------------------------
@@ -139,7 +145,14 @@ export function createApp(deps: AppDeps): Router {
     const parsed = putConfigRequestSchema.parse(req.body);
     const configService = new ConfigService(client, configRepo, projectId);
     const result = await configService.save(parsed.config, parsed.expectedRevision);
-    return ok({ configRevision: result.revision });
+    // Return the full ConfigResponse (the shape the widget consumes), not just the revision.
+    const body: ConfigResponse = {
+      configured: true,
+      configRevision: result.revision,
+      config: parsed.config,
+      isManager: principal.isManager,
+    };
+    return ok(body);
   });
 
   // ---- GET /config/validation --------------------------------------------------
@@ -191,8 +204,9 @@ export function createApp(deps: AppDeps): Router {
     const ctx = await requireContext(req);
     const sprint = await loadSprintRecord(ctx, req.params.sprintId!);
     const record = await ctx.sprintRepo.load(sprint, ctx.projectId);
-    // Recompute the missing-effort warning list live for display.
+    // Recompute the missing-effort warning list + per-assignee load live for display.
     let missing: string[] = [];
+    let assignment = undefined;
     if (sprint.start && sprint.finish) {
       const issues = await client.getSprintIssues(
         ctx.boardId,
@@ -200,15 +214,20 @@ export function createApp(deps: AppDeps): Router {
         ctx.config.originalEffortField,
         ctx.config.currentEffortField,
       );
-      missing = computeMetrics(
+      const metrics = computeMetrics(
         record.capacity,
         issues,
         sprint.start,
         sprint.finish,
         record.focusFactor,
-      ).issuesMissingOriginalEffort;
+      );
+      missing = metrics.issuesMissingOriginalEffort;
+      assignment = {
+        assignedEffort: metrics.assignedEffort,
+        unassignedEffort: metrics.unassignedEffort,
+      };
     }
-    return ok(toSprintView(record, missing));
+    return ok(toSprintView(record, missing, assignment));
   });
 
   // ---- POST /sprints/create-next ----------------------------------------------
@@ -257,12 +276,17 @@ export function createApp(deps: AppDeps): Router {
     const updated = await sprintService.patchDetails(ctx.boardId, sprint.id, parsed, sprint);
     // Date changes recompute default capacity; reconcile to refresh metrics.
     const record = await ctx.sprintRepo.load(updated, ctx.projectId);
-    await reconciliation.reconcile(record, ctx.config, ctx.boardId, ctx.principal.userId);
+    const result = await reconciliation.reconcile(record, ctx.config, ctx.boardId, ctx.principal.userId);
     const fresh = await ctx.sprintRepo.load(
       (await client.getSprint(ctx.boardId, sprint.id))!,
       ctx.projectId,
     );
-    return ok(toSprintView(fresh, []));
+    return ok(
+      toSprintView(fresh, result.metrics.issuesMissingOriginalEffort, {
+        assignedEffort: result.metrics.assignedEffort,
+        unassignedEffort: result.metrics.unassignedEffort,
+      }),
+    );
   });
 
   // ---- Capacity mutations ------------------------------------------------------
@@ -303,6 +327,7 @@ export function createApp(deps: AppDeps): Router {
 
   const confirm = async (req: HttpRequest, confirmed: boolean): Promise<HttpResponse> => {
     const ctx = await requireContext(req);
+    const parsed = capacityRevisionRequestSchema.parse(req.body);
     const sprint = await loadSprintRecord(ctx, req.params.sprintId!);
     const record = await ctx.sprintRepo.load(sprint, ctx.projectId);
     if (!record.capacity) throw notFound('Capacity document');
@@ -311,7 +336,7 @@ export function createApp(deps: AppDeps): Router {
       sprint.id,
       record.capacity,
       record.capacityRevision,
-      record.capacityRevision,
+      parsed.expectedRevision,
       ctx.principal.userId,
       ctx.principal,
       { confirmed },
@@ -323,6 +348,7 @@ export function createApp(deps: AppDeps): Router {
 
   router.add('POST', '/sprints/:sprintId/capacity/:userId/reset', async (req) => {
     const ctx = await requireContext(req);
+    const parsed = capacityRevisionRequestSchema.parse(req.body);
     const sprint = await loadSprintRecord(ctx, req.params.sprintId!);
     const record = await ctx.sprintRepo.load(sprint, ctx.projectId);
     if (!record.capacity) throw notFound('Capacity document');
@@ -331,6 +357,7 @@ export function createApp(deps: AppDeps): Router {
       sprint.id,
       record.capacity,
       record.capacityRevision,
+      parsed.expectedRevision,
       req.params.userId!,
       ctx.principal,
     );
@@ -344,9 +371,14 @@ export function createApp(deps: AppDeps): Router {
     const sprint = await loadSprintRecord(ctx, req.params.sprintId!);
     const record = await ctx.sprintRepo.load(sprint, ctx.projectId);
     const reconciliation = new ReconciliationService(client, ctx.sprintRepo, clock);
-    await reconciliation.reconcile(record, ctx.config, ctx.boardId, ctx.principal.userId);
+    const result = await reconciliation.reconcile(record, ctx.config, ctx.boardId, ctx.principal.userId);
     const fresh = await ctx.sprintRepo.load(sprint, ctx.projectId);
-    return ok(toSprintView(fresh, []));
+    return ok(
+      toSprintView(fresh, result.metrics.issuesMissingOriginalEffort, {
+        assignedEffort: result.metrics.assignedEffort,
+        unassignedEffort: result.metrics.unassignedEffort,
+      }),
+    );
   });
 
   // ---- POST /sprints/:sprintId/focus-factor/override --------------------------

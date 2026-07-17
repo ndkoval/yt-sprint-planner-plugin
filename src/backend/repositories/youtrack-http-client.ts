@@ -216,8 +216,10 @@ export class YouTrackHttpClient implements YouTrackClient {
     originalEffortField: string,
     currentEffortField: string,
   ): Promise<YtIssue[]> {
+    // SPIKE: confirm the Assignee field name/shape on the target version. Assignee is a
+    // single-user custom field; we read its value id as the stable user id.
     const fields =
-      'id,resolved,customFields(name,value(minutes,presentation))';
+      'id,resolved,customFields(name,value(minutes,presentation,id,login))';
     const issues = await this.conn.get(
       `/api/agiles/${encodeURIComponent(boardId)}/sprints/${encodeURIComponent(sprintId)}/issues`,
       { fields },
@@ -232,12 +234,19 @@ export class YouTrackHttpClient implements YouTrackClient {
         return typeof m === 'number' ? m : null;
       };
       const resolvedMs = pick(i, 'resolved');
+      const assigneeId = (): string | null => {
+        if (!Array.isArray(cf)) return null;
+        const f = cf.find((c) => pick(c, 'name') === 'Assignee');
+        const id = pick(pick(f, 'value'), 'id');
+        return typeof id === 'string' && id.length > 0 ? id : null;
+      };
       return {
         id: String(pick(i, 'id')),
         originalEffortMinutes: periodMinutes(originalEffortField),
         currentEffortMinutes: periodMinutes(currentEffortField),
         resolved: typeof resolvedMs === 'number' && resolvedMs > 0,
         resolvedAt: typeof resolvedMs === 'number' && resolvedMs > 0 ? resolvedMs : null,
+        assigneeId: assigneeId(),
       };
     });
   }
