@@ -1,0 +1,20 @@
+{
+  "$schema": "https://www.jetbrains.com/help/youtrack/devportal-apps/apps-settings.html",
+  "comment": "App-level settings surfaced to administrators. Per-project runtime configuration lives in the Project extension property scpConfigJson and is edited through the Sprint Capacity Settings widget.",
+  "settings": [
+    {
+      "key": "reminderLeadDays",
+      "name": "Availability reminder lead days",
+      "type": "integer",
+      "default": 3,
+      "description": "Send an availability reminder to unconfirmed participants this many days before Sprint start. Informational only; never blocks."
+    },
+    {
+      "key": "reconciliationCron",
+      "name": "Reconciliation schedule (Quartz cron)",
+      "type": "string",
+      "default": "0 0 * * * ?",
+      "description": "Cron expression for the hourly authoritative reconciliation on-schedule workflow."
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://www.jetbrains.com/help/youtrack/devportal-apps/apps-manifest.html",
+  "name": "sprint-capacity-planner",
+  "title": "Sprint Capacity Planner",
+  "description": "Capacity planning, computed metrics and a one-click next-Sprint button on top of native YouTrack Sprints. No service issues, no locks, no committed scope.",
+  "version": "0.1.0",
+  "vendor": {
+    "name": "AppGlass",
+    "url": "https://example.com/appglass"
+  },
+  "minYouTrackVersion": "2024.3",
+  "icon": "assets/icon.svg",
+  "iconDark": "assets/icon-dark.svg",
+  "widgets": [
+    {
+      "key": "sprint-capacity-tab",
+      "name": "Sprint Capacity",
+      "indexPath": "widgets/project-tab/index.html",
+      "extensionPoint": "PROJECT_SETTINGS",
+      "description": "Sprint capacity planning tab for a project."
+    },
+    {
+      "key": "sprint-capacity-settings",
+      "name": "Sprint Capacity Settings",
+      "indexPath": "widgets/project-settings/index.html",
+      "extensionPoint": "PROJECT_SETTINGS",
+      "description": "Configuration for the Sprint Capacity Planner."
+    }
+  ],
+  "backend": {
+    "entryPoint": "backend/index.js"
+  },
+  "scopes": ["Agile.Read", "Agile.Update", "Issue.Read", "Project.Read"]
+}

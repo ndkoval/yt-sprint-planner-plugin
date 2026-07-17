@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-07-16T11:14:16.889Z",
+  "tooling": {
+    "ffprobe": true,
+    "ffmpeg": true
+  },
+  "minDurationSec": 1,
+  "videoCount": 0,
+  "failures": 0,
+  "videos": []
+}

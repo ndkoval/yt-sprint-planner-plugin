@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.zip
+
+# Test & CI artifacts
+artifacts/
+coverage/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Real-YouTrack secrets / local env (NEVER commit tokens)
+.env
+.env.*
+!.env.example
+*.token
+
+# OS / editor
+.DS_Store
+*.log
+.idea/
+.vscode/

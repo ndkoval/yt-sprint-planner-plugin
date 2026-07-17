@@ -1,0 +1,164 @@
+# CI pipeline for the Sprint Capacity Planner YouTrack app (§30).
+#
+# Fast lane (always on PRs/pushes): install -> lint -> typecheck:all -> unit ->
+# contract -> build -> pack, then publish the app package as an artifact.
+#
+# real-youtrack lane (opt-in): provisions a LOCAL YouTrack Server WITHOUT Docker
+# (download + bin/youtrack.sh), installs the app, runs the integration + workflow
+# tests, Playwright critical + regression, analyses UI artifacts, then publishes.
+# It is gated behind a protected environment + the YT_TEST_ALLOW_DESTRUCTIVE flag and
+# marked continue-on-error / manual because the distribution download is
+# environment-specific (offline runners cannot fetch it).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_real_youtrack:
+        description: 'Run the real-YouTrack (local, no-Docker) lane'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  build-and-test:
+    name: Lint / Typecheck / Unit / Contract / Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck (all)
+        run: npm run typecheck:all
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Contract tests
+        run: npm run test:contract
+      - name: Build app package
+        run: npm run build
+      - name: Pack app ZIP
+        run: npm run pack
+      - name: Upload app package
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-package
+          path: dist/sprint-capacity-planner.zip
+          retention-days: 30
+
+  # Security scan + automated code review placeholders (§30). Wire to the real
+  # tooling/plugins when available; kept as explicit, non-blocking steps for now.
+  security-and-review:
+    name: Security + Code Review (placeholders)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Security review (placeholder)
+        run: echo "SPIKE: wire security scanner / security-review plugin here."
+      - name: Automated code review (placeholder)
+        run: echo "SPIKE: wire the code-review plugin here."
+
+  real-youtrack:
+    name: Real YouTrack (local, no Docker)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    # Only on manual dispatch with the opt-in flag; distribution download is
+    # environment-specific, so this lane is allowed to fail without failing CI.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_real_youtrack }}
+    continue-on-error: true
+    environment: real-youtrack # protected environment gates the secrets below
+    env:
+      YT_TEST_BASE_URL: ${{ secrets.YT_TEST_BASE_URL }}
+      YT_TEST_ADMIN_TOKEN: ${{ secrets.YT_TEST_ADMIN_TOKEN }}
+      YT_TEST_MANAGER_LOGIN: ${{ secrets.YT_TEST_MANAGER_LOGIN }}
+      YT_TEST_MANAGER_PASSWORD: ${{ secrets.YT_TEST_MANAGER_PASSWORD }}
+      YT_TEST_ALICE_LOGIN: ${{ secrets.YT_TEST_ALICE_LOGIN }}
+      YT_TEST_ALICE_PASSWORD: ${{ secrets.YT_TEST_ALICE_PASSWORD }}
+      YT_TEST_BOB_LOGIN: ${{ secrets.YT_TEST_BOB_LOGIN }}
+      YT_TEST_BOB_PASSWORD: ${{ secrets.YT_TEST_BOB_PASSWORD }}
+      YT_TEST_PROJECT_PREFIX: SCP_E2E_CI
+      # Destructive gate — required for provision/seed/cleanup against the disposable
+      # local instance.
+      YT_TEST_ALLOW_DESTRUCTIVE: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Install ffmpeg (video analysis)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Build + pack app
+        run: npm run build && npm run pack
+      - name: Provision local YouTrack (no Docker) + install app
+        run: npm run provision:real-youtrack
+      - name: Integration + workflow tests (provision/seed/run/cleanup)
+        run: npm run test:integration:real
+      - name: Playwright — critical journeys
+        run: npm run test:e2e -- --project=setup --project=critical
+      - name: Playwright — regression journeys
+        run: npm run test:e2e -- --project=setup --project=regression
+      - name: Analyse UI artifacts (video integrity + contact sheets)
+        if: always()
+        run: npm run test:e2e:analyze
+      - name: Ensure local instance is torn down
+        if: always()
+        run: npm run cleanup:real-youtrack
+      - name: Publish test summary
+        if: always()
+        run: npm run publish:test-summary
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: artifacts/playwright-report
+          retention-days: 14
+      - name: Upload test results (videos/traces/screenshots)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: artifacts/test-results
+          retention-days: 14
+      - name: Upload UI analysis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-analysis
+          path: |
+            artifacts/ui-analysis.md
+            artifacts/contact-sheets
+            tests/video-analysis/video-integrity.json
+          retention-days: 14
+      - name: Upload environment + cleanup reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: environment-reports
+          path: |
+            artifacts/test-environment-manifest.json
+            artifacts/orphan-cleanup-report.json
+            artifacts/index.html
+          retention-days: 14

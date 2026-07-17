@@ -1,0 +1,53 @@
+{
+  "$schema": "https://www.jetbrains.com/help/youtrack/devportal-apps/apps-entity-extensions.html",
+  "comment": "App-owned custom properties (prefix scp). Primitive arrays are not supported by the SDK, so dynamic structures are stored as versioned JSON strings. name/start/finish on Sprint remain native and are managed via REST, not here.",
+  "Sprint": {
+    "scpManaged": { "type": "boolean" },
+    "scpSchemaVersion": { "type": "integer" },
+    "scpProjectId": { "type": "string" },
+    "scpBoardId": { "type": "string" },
+    "scpSequence": { "type": "integer" },
+    "scpCreateOperationId": { "type": "string" },
+
+    "scpCapacityRevision": { "type": "integer" },
+    "scpCapacityJson": { "type": "string" },
+
+    "scpFocusFactor": { "type": "float" },
+    "scpFocusFactorSource": { "type": "string" },
+    "scpFocusFactorOverrideJson": { "type": "string" },
+
+    "scpRawCapacityMinutes": { "type": "integer" },
+    "scpConfirmedCapacityMinutes": { "type": "integer" },
+    "scpPlannedCapacityMinutes": { "type": "integer" },
+
+    "scpOriginalEffortMinutes": { "type": "integer" },
+    "scpCurrentEffortMinutes": { "type": "integer" },
+    "scpCompletedOriginalEffortMinutes": { "type": "integer" },
+    "scpObservedFocusFactor": { "type": "float" },
+
+    "scpExcludedFromCalibration": { "type": "boolean" },
+    "scpCalibrationSkipReason": { "type": "string" },
+
+    "scpMetricsRevision": { "type": "integer" },
+    "scpMetricsDirty": { "type": "boolean" },
+    "scpDataIntegrityStatus": { "type": "string" },
+    "scpLastWorkflowUpdateAt": { "type": "integer" },
+    "scpLastRecalculatedAt": { "type": "integer" },
+    "scpLastRecalculatedBy": { "type": "user" },
+
+    "scpCompletionCalculatedAt": { "type": "integer" },
+    "scpCompletionCalculationJson": { "type": "string" }
+  },
+  "Issue": {
+    "scpIssueSchemaVersion": { "type": "integer" },
+    "scpMetricsSnapshotJson": { "type": "string" },
+    "scpWorkflowRevision": { "type": "integer" },
+    "scpWorkflowError": { "type": "string" }
+  },
+  "Project": {
+    "scpConfigVersion": { "type": "integer" },
+    "scpConfigJson": { "type": "string" },
+    "scpCapacityManagers": { "type": "string" },
+    "scpConfigRevision": { "type": "integer" }
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "name": "sprint-capacity-planner",
+  "version": "0.1.0",
+  "private": true,
+  "description": "YouTrack App: Sprint Capacity Planner for the AppGlass team. Adds capacity planning, computed metrics and a one-click next-Sprint button on top of native YouTrack Sprints.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:widgets": "tsc -p tsconfig.widgets.json --noEmit",
+    "typecheck:all": "npm run typecheck && npm run typecheck:widgets",
+    "test:unit": "vitest run tests/unit",
+    "test:contract": "vitest run tests/contract",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage tests/unit tests/contract",
+    "build:widgets": "node scripts/build-widgets.mjs",
+    "build:backend": "node scripts/build-backend.mjs",
+    "build": "node scripts/build.mjs",
+    "pack": "node scripts/pack.mjs",
+    "provision:real-youtrack": "node scripts/provision-real-youtrack.mjs",
+    "seed:real-youtrack": "node scripts/seed-real-youtrack.mjs",
+    "cleanup:real-youtrack": "node scripts/cleanup-real-youtrack.mjs",
+    "test:integration:real": "node scripts/run-real-integration.mjs",
+    "demo:serve": "node scripts/serve-demo.mjs",
+    "test:e2e": "node scripts/run-e2e.mjs",
+    "test:e2e:demo": "playwright test --config playwright.demo.config.ts",
+    "test:e2e:analyze": "node scripts/analyze-ui-artifacts.mjs",
+    "publish:test-summary": "node scripts/publish-test-summary.mjs",
+    "test:all": "npm run lint && npm run typecheck:all && npm run test:unit && npm run test:contract && npm run build"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.1",
+    "@eslint/js": "^9.18.0",
+    "@jetbrains/ring-ui-built": "^7.0.0",
+    "@playwright/test": "^1.49.1",
+    "@types/node": "^22.10.5",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitest/coverage-v8": "^3.0.5",
+    "esbuild": "^0.24.2",
+    "eslint": "^9.18.0",
+    "globals": "^15.14.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.20.0",
+    "vitest": "^3.0.5"
+  }
+}

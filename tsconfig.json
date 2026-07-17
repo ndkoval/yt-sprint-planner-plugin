@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": [
+    "src/domain",
+    "src/backend",
+    "tests/unit",
+    "tests/contract",
+    "tests/fixtures"
+  ]
+}
