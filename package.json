@@ -29,10 +29,11 @@
     "test:integration:real": "node scripts/run-real-integration.mjs",
     "demo:serve": "node scripts/serve-demo.mjs",
     "test:e2e": "node scripts/run-e2e.mjs",
-    "test:e2e:demo": "playwright test --config playwright.demo.config.ts",
+    "test:e2e:demo": "playwright test --config playwright.demo.config.ts && ANALYZE_BASE=artifacts/demo node scripts/analyze-ui-artifacts.mjs",
     "test:e2e:analyze": "node scripts/analyze-ui-artifacts.mjs",
     "publish:test-summary": "node scripts/publish-test-summary.mjs",
-    "test:all": "npm run lint && npm run typecheck:all && npm run test:unit && npm run test:contract && npm run build"
+    "test": "npm run test:all",
+    "test:all": "npm run lint && npm run typecheck:all && npm run test:unit && npm run test:contract && npm run build && npm run test:e2e:demo"
   },
   "dependencies": {
     "zod": "^3.24.1"

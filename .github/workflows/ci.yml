@@ -58,6 +58,34 @@ jobs:
           path: dist/sprint-capacity-planner.zip
           retention-days: 30
 
+  # Demo reels: run the self-contained Playwright demo suite (real widgets + real
+  # backend + in-memory YouTrack). Recording the videos IS running the tests; the
+  # subtitles, contact sheets, and ui-analysis.md verdict are produced automatically.
+  demos:
+    name: Demo reels (Playwright, 720p + subtitles)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Install ffmpeg (video analysis)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Record demo reels + analyse artifacts
+        run: npm run test:e2e:demo
+      - name: Upload demo artifacts (videos, subtitles, contact sheets, ui-analysis)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-reels
+          path: artifacts/demo
+          retention-days: 30
+
   # Security scan + automated code review placeholders (§30). Wire to the real
   # tooling/plugins when available; kept as explicit, non-blocking steps for now.
   security-and-review:

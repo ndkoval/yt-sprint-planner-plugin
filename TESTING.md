@@ -141,17 +141,24 @@ an in-memory YouTrack (the same transport fake the contract tests use) and serve
 `scripts/serve-demo.mjs`. It needs no live YouTrack, so it runs on any platform and in CI.
 
 ```bash
-npm run build:widgets                       # build the widget bundles the harness serves
-npm run test:e2e:demo                        # Playwright: 9 journeys, video/trace/screenshots
-ANALYZE_BASE=artifacts/demo npm run test:e2e:analyze   # video integrity + ui-analysis.md verdict
+npm test                                     # full gate — also records the demos
+npm run test:e2e:demo                        # just the demos: builds widgets, records 10 journeys,
+                                             #   writes subtitles + ui-analysis.md (APPROVE/FIX verdict)
 npm run demo:serve                           # (optional) serve the demo at http://localhost:8090 to explore
 ```
 
-Journeys: **product walkthrough** (the full "sales reel"), overview/metrics, create-next-Sprint,
-member availability (own-row-only editing), manager controls (recalculate + focus-factor
-override), settings, **team workflow** (create → set availability → confirm), **auto remaining
-capacity** (adding a task lowers remaining capacity automatically), and **sprint navigation**
-(switch Sprints + open the board to see issues and jump into a Sprint). Each records a video,
+**Running the tests produces the demos.** `npm test` / `npm run test:all` end by recording the
+full demo suite. Two of the journeys are **marketing reels** — `00-product-walkthrough` and
+`00b-team-capacity-reel` — recorded like a real person: a visible gliding **cursor**, human
+pacing, **720p**, on-screen **subtitles** plus a **WebVTT** track under
+`artifacts/demo/subtitles/`. See also the launch [blog post](docs/blog/announcing-sprint-capacity-planner.md).
+
+Journeys (10): **product walkthrough** and **team-capacity** (the two marketing reels),
+overview/metrics, create-next-Sprint, member availability (own-row-only editing), manager
+controls (recalculate + focus-factor override), settings, **team workflow** (create → set
+availability → confirm), **auto remaining capacity** (adding a task lowers remaining capacity
+automatically), and **sprint navigation** (switch Sprints + open the board to see issues and
+jump into a Sprint). Each records a video,
 runs an axe accessibility scan, and asserts no console/page errors. The suite is **deterministic
 and independent of run order** — an auto-fixture resets the harness world before every test, so
 these are plain web tests that need no AI to run. Chromium runs **headless** (no window steals

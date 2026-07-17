@@ -13,6 +13,8 @@ All notable changes to the Sprint Capacity Planner are documented here. The form
 
 ### Added
 
+- **Two marketing reels, recorded like a human** — `00-product-walkthrough` (full story) and `00b-team-capacity-reel` (whole-team availability + confirmation). Both feature a visible gliding **cursor**, human pacing, crisp **720p**, on-screen **subtitles** plus a **WebVTT** track (`artifacts/demo/subtitles/*.vtt`), and a launch **blog post** ([`docs/blog/announcing-sprint-capacity-planner.md`](docs/blog/announcing-sprint-capacity-planner.md)).
+- **Running the tests produces the demos** — `npm run test:all` (and `npm test`) now build the widgets, record all demo journeys (video/trace/subtitles), and write `artifacts/demo/ui-analysis.md` with an APPROVE/FIX-REQUIRED verdict. A dedicated CI `demos` job uploads the reels + subtitles.
 - **Comprehensive product walkthrough demo** ([`tests/e2e/demo/00-product-walkthrough.spec.ts`](tests/e2e/demo/00-product-walkthrough.spec.ts)) — the end-to-end "sales reel" recorded as one video: overview → create next Sprint → member confirms availability → task added → remaining capacity updates automatically → open board.
 - **Team-workflow demo** (create → set availability → confirm across Alice/Bob/manager), **auto-remaining-capacity demo** (adding a task lowers remaining capacity with no manual action), and **sprint-navigation demo** (switch Sprints via the selector; open the board to see issues and jump into a Sprint). Board stub + `/__demo` hooks live in [`tests/e2e/harness`](tests/e2e/harness).
 - **Deterministic demo suite** — an auto-fixture resets the in-memory world (`/__demo/reset`) before every test, so the 9-journey suite is independent of run order and needs no AI to run: `npm run test:e2e:demo`.
