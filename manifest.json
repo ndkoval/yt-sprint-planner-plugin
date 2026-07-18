@@ -28,7 +28,7 @@
     }
   ],
   "backend": {
-    "entryPoint": "backend/index.js"
+    "entryPoint": "backend.js"
   },
   "scopes": ["Agile.Read", "Agile.Update", "Issue.Read", "Project.Read"]
 }

@@ -108,8 +108,11 @@ function isApiError(value: unknown): value is ApiError {
  * outside the iframe during local development.
  */
 export class WindowHostBridge implements HostBridge {
-  // SPIKE: confirm host API — the base path the app backend is mounted under.
+  // Dev fallback base path (standalone harness serves the backend here).
   private static readonly APP_BASE_PATH = '/api/apps/sprint-capacity-planner/backend';
+  // Host mode: the tunnel endpoint, relative to the app. `backend` is the handler file
+  // (backend.js at the package root), `api` is the endpoint path declared in it.
+  private static readonly API_ENDPOINT = 'backend/api';
 
   private hostPromise: Promise<YouTrackHost | null> | null = null;
 
@@ -152,17 +155,22 @@ export class WindowHostBridge implements HostBridge {
     const host = await this.host();
     const body = init?.body !== undefined ? (JSON.parse(init.body) as unknown) : undefined;
     if (host) {
-      // SPIKE: confirm host API — fetchApp signature + how it surfaces status codes.
-      const raw = await host.fetchApp(path, {
-        ...(init?.method !== undefined ? { method: init.method } : {}),
-        ...(body !== undefined ? { body } : {}),
-      });
-      return new Response(JSON.stringify(raw ?? null), {
-        status: 200,
+      // YouTrack app HTTP handlers only allow GET/POST/PUT/DELETE at fixed paths, so every
+      // call is tunnelled as a POST to the single `api` endpoint carrying the real method +
+      // app-relative path. The backend replies with `{ status, body }` (the transport is
+      // always 200); we reconstruct a Response with the real status. The endpoint lives at
+      // `<handlerFile>/api` where the handler file is `backend/index`. See backend/index.ts.
+      const raw = (await host.fetchApp(`${WindowHostBridge.API_ENDPOINT}`, {
+        method: 'POST',
+        body: { method: init?.method ?? 'GET', path, ...(body !== undefined ? { body } : {}) },
+      })) as { status?: number; body?: unknown } | null;
+      const status = typeof raw?.status === 'number' ? raw.status : 200;
+      return new Response(JSON.stringify(raw?.body ?? null), {
+        status,
         headers: { 'content-type': 'application/json' },
       });
     }
-    // Dev fallback: same-origin fetch against the mounted base path.
+    // Dev fallback: same-origin fetch against the mounted base path (standalone harness).
     const url = `${WindowHostBridge.APP_BASE_PATH}${path}`;
     return window.fetch(url, {
       method: init?.method ?? 'GET',

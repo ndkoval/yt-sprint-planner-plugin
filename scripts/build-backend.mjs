@@ -17,22 +17,33 @@ import path from 'node:path';
 
 runMain('build:backend', async (log) => {
   const entry = fromRoot('src', 'backend', 'index.ts');
-  const outfile = path.join(DIST_DIR, 'backend', 'index.js');
+  // Root-level file: YouTrack discovers HTTP handlers from top-level package scripts and
+  // derives the handler name from the file name — so `backend.js` → handler `backend`,
+  // reachable at /api/extensionEndpoints/<app>/backend/<endpoint>.
+  const outfile = path.join(DIST_DIR, 'backend.js');
   log.info('bundling', entry, '->', outfile);
 
   await build({
     entryPoints: [entry],
     outfile,
     bundle: true,
-    platform: 'node',
-    // SPIKE: confirm backend module format (see file header). cjs assumed.
+    // 'neutral' so esbuild assumes NO Node runtime — YouTrack's app backend engine has
+    // no `process`/`Buffer`/etc. We provide the few globals the bundle needs via `banner`.
+    platform: 'neutral',
     format: 'cjs',
     target: 'es2020',
     minify: false,
     sourcemap: false,
-    // zod is bundled (NOT external) so the backend ships self-contained.
-    external: [],
+    // zod is bundled (NOT external). The YouTrack workflow API modules are provided by the
+    // runtime via require() and MUST stay external so they resolve inside YouTrack.
+    external: ['@jetbrains/youtrack-scripting-api', '@jetbrains/youtrack-scripting-api/*'],
     define: { 'process.env.NODE_ENV': '"production"' },
+    // Minimal shims for globals the YouTrack app runtime doesn't provide. `process` is
+    // referenced transitively (e.g. by bundled deps); define a stub so module load
+    // doesn't throw ReferenceError. Extend here if other globals surface.
+    banner: {
+      js: "var process = (typeof globalThis !== 'undefined' && globalThis.process) || { env: { NODE_ENV: 'production' }, platform: '', version: '' };",
+    },
     logLevel: 'info',
   });
 

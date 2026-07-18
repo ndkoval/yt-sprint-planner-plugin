@@ -3,6 +3,20 @@
   "comment": "App-level settings surfaced to administrators. Per-project runtime configuration lives in the Project extension property scpConfigJson and is edited through the Sprint Capacity Settings widget.",
   "settings": [
     {
+      "key": "youtrackToken",
+      "name": "YouTrack API token",
+      "type": "string",
+      "default": "",
+      "description": "Permanent token the backend uses to call YouTrack's REST API as the app (the backend runtime has no automatic same-instance auth). Store a token with the app's scopes."
+    },
+    {
+      "key": "youtrackBaseUrl",
+      "name": "YouTrack base URL",
+      "type": "string",
+      "default": "http://localhost:8080",
+      "description": "Base URL the backend uses for same-instance REST calls."
+    },
+    {
       "key": "reminderLeadDays",
       "name": "Availability reminder lead days",
       "type": "integer",

@@ -28,6 +28,20 @@ export interface RestConnection {
   post(path: string, body: unknown, query?: Record<string, string>): Promise<unknown>;
 }
 
+/**
+ * Runtime connection parameters for the in-YouTrack scripting transport. The backend has
+ * no `fetch` and (per the app architecture) no automatic same-instance REST auth, so the
+ * HTTP handler supplies the instance base URL + an app token (from app settings) before
+ * each dispatch. NOTE: the "blessed" long-term approach is the Backend JavaScript
+ * (entities) API; this token-authenticated REST-to-self is a pragmatic bridge.
+ */
+let runtimeBaseUrl = 'http://localhost:8080';
+let runtimeToken: string | null = null;
+export function configureRuntimeConnection(baseUrl: string | null, token: string | null): void {
+  if (baseUrl !== null && baseUrl.length > 0) runtimeBaseUrl = baseUrl;
+  runtimeToken = token;
+}
+
 /** yyyy-mm-dd for a UTC-midnight epoch ms (YouTrack sprint dates are day-precision). */
 function msToIso(ms: number | null | undefined): string | null {
   if (typeof ms !== 'number') return null;
@@ -87,13 +101,84 @@ function connectionFromEnv(): RestConnection {
   return new FetchRestConnection(baseUrl, token);
 }
 
+/**
+ * Connection used inside a deployed YouTrack app: the runtime has no `fetch`, so REST
+ * calls to the same instance go through the workflow API's synchronous
+ * {@link http.Connection} (`@jetbrains/youtrack-scripting-api/http`). The base URL and an
+ * app token come from app settings (secret) so the app authenticates as itself.
+ */
+export class ScriptingApiConnection implements RestConnection {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- runtime-provided module
+  private readonly http: any;
+  constructor() {
+    // Required lazily so this file stays importable off-runtime (tests use FetchRest).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    this.http = require('@jetbrains/youtrack-scripting-api/http');
+  }
+
+  private newConn(): {
+    getSync(p: string, q: unknown): { isSuccess: boolean; code?: number; status?: number; response?: string };
+    postSync(p: string, q: unknown, b?: string): { isSuccess: boolean; code?: number; status?: number; response?: string };
+  } {
+    // Read the current base URL + token each call (the handler sets them from app settings).
+    const c = new this.http.Connection(runtimeBaseUrl);
+    c.addHeader('Accept', 'application/json');
+    c.addHeader('Content-Type', 'application/json');
+    if (runtimeToken !== null && runtimeToken.length > 0) c.bearerAuth(runtimeToken);
+    return c as ReturnType<ScriptingApiConnection['newConn']>;
+  }
+
+  private static toQuery(query?: Record<string, string>): Array<{ name: string; value: string }> {
+    return query ? Object.entries(query).map(([name, value]) => ({ name, value })) : [];
+  }
+
+  private static parse(
+    res: { isSuccess: boolean; code?: number; status?: number; response?: string },
+    method: string,
+    path: string,
+  ): unknown {
+    if (!res.isSuccess) {
+      throw new Error(`YouTrack REST ${method} ${path} failed with ${res.code ?? res.status ?? '?'}`);
+    }
+    const text = res.response ?? '';
+    return text.length > 0 ? JSON.parse(text) : null;
+  }
+
+  get(path: string, query?: Record<string, string>): Promise<unknown> {
+    const res = this.newConn().getSync(path, ScriptingApiConnection.toQuery(query));
+    return Promise.resolve(ScriptingApiConnection.parse(res, 'GET', path));
+  }
+
+  post(path: string, body: unknown, query?: Record<string, string>): Promise<unknown> {
+    const res = this.newConn().postSync(
+      path,
+      ScriptingApiConnection.toQuery(query),
+      JSON.stringify(body),
+    );
+    return Promise.resolve(ScriptingApiConnection.parse(res, 'POST', path));
+  }
+}
+
+/**
+ * Choose the connection for the current runtime. Inside YouTrack the scripting API's
+ * `require` succeeds and we talk to the same instance; off-runtime (unit/integration
+ * harness) we fall back to the `fetch`-based connection from env.
+ */
+function defaultConnection(): RestConnection {
+  try {
+    return new ScriptingApiConnection();
+  } catch {
+    return connectionFromEnv();
+  }
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any -- raw REST JSON is dynamically shaped; access is narrowed locally. */
 function pick(obj: unknown, key: string): any {
   return obj && typeof obj === 'object' ? (obj as Record<string, unknown>)[key] : undefined;
 }
 
 export class YouTrackHttpClient implements YouTrackClient {
-  constructor(private readonly conn: RestConnection = connectionFromEnv()) {}
+  constructor(private readonly conn: RestConnection = defaultConnection()) {}
 
   async getCurrentUser(): Promise<YtUser> {
     const u = await this.conn.get('/api/users/me', { fields: 'id,login,name' });
