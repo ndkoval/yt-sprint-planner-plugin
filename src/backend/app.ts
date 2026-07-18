@@ -186,15 +186,16 @@ export function createApp(deps: AppDeps): Router {
     const ctx = await requireContext(req);
     const sprints = await client.listSprints(ctx.boardId);
     const managed = await ctx.sprintRepo.loadAllManaged(ctx.projectId);
-    const sequenceById = new Map(managed.map((r) => [r.native.id, r.sequence]));
+    const recordById = new Map(managed.map((r) => [r.native.id, r]));
     const summaries: SprintSummary[] = sprints.map((s) => ({
       id: s.id,
       name: s.name,
       start: s.start ?? '',
       finish: s.finish ?? '',
       archived: s.archived,
-      managed: sequenceById.has(s.id),
-      sequence: sequenceById.get(s.id) ?? 0,
+      managed: recordById.has(s.id),
+      sequence: recordById.get(s.id)?.sequence ?? 0,
+      unresolvedIssueCount: recordById.get(s.id)?.unresolvedIssueCount ?? 0,
     }));
     return ok(summaries);
   });

@@ -16,7 +16,7 @@ test.describe('Team workflow: create → set availability', () => {
     // 1) Manager creates the next Sprint (S3).
     await openTab(page, 'manager', 'sprint-2');
     await page.getByRole('button', { name: 'Create next Sprint' }).click();
-    await expect(page.getByText('AppGlass 2026-S3')).toBeVisible();
+    await expect(page.getByText('AppGlass 2026-S3', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Create Sprint' }).click();
     await expect(page.getByText('AppGlass 2026-S3').first()).toBeVisible({ timeout: 15_000 });
     const sprintId = await page.evaluate(async (api) => {

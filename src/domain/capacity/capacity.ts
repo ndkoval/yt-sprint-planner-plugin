@@ -59,6 +59,16 @@ export function remainingCapacityMinutes(
 }
 
 /**
+ * How much of a capacity budget is left after committing some work — the "what fits"
+ * headroom. Used both for the Sprint (Planned Capacity vs committed Original Effort) and
+ * per person (available capacity vs their assigned/committed Original Effort). Negative
+ * means over-committed. This is the Jira "capacity vs commitment" comparison.
+ */
+export function committedFitMinutes(capacityMinutes: number, committedMinutes: number): number {
+  return capacityMinutes - committedMinutes;
+}
+
+/**
  * Recompute each row's `defaultMinutes` for new Sprint dates. Rows whose available
  * was NOT customized track the new default; customized rows keep their available
  * value (the UI offers "Reset to default" instead of overwriting). Pure — returns

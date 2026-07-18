@@ -42,7 +42,7 @@ test.describe('Marketing reel — product walkthrough', () => {
     // ── 2. Create the next Sprint in one click — name, dates and focus factor computed.
     await cap.say('Create the next Sprint in one click');
     await humanClick(page, page.getByRole('button', { name: 'Create next Sprint' }));
-    await expect(page.getByText('AppGlass 2026-S3')).toBeVisible();
+    await expect(page.getByText('AppGlass 2026-S3', { exact: true })).toBeVisible();
     await cap.say('Name, dates and focus factor are computed automatically');
     await expect(page.getByText('2026-07-20')).toBeVisible();
     await humanFill(
@@ -51,6 +51,16 @@ test.describe('Marketing reel — product walkthrough', () => {
       'Deepen reporting and polish onboarding',
     );
     await settle(page, 500);
+    // Carry over the unfinished work from the current Sprint, just like Jira's
+    // Complete-Sprint step — the exact count is shown.
+    await cap.say('Carry over the unfinished work from the current Sprint');
+    await expect(
+      page.getByText('Carry over 3 unfinished issues from the current Sprint'),
+    ).toBeVisible();
+    const carryOver = page.getByRole('checkbox');
+    await moveTo(page, carryOver);
+    await carryOver.check();
+    await settle(page, 700);
     await humanClick(page, page.getByRole('button', { name: 'Create Sprint' }));
     await expect(page.getByText('AppGlass 2026-S3').first()).toBeVisible({ timeout: 15_000 });
     const sprintId = await page.evaluate(async (api) => {

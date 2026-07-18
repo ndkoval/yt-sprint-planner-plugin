@@ -44,6 +44,8 @@ export interface SprintRecord {
   currentEffortMinutes: number;
   completedOriginalEffortMinutes: number;
   observedFocusFactor: number | null;
+  /** Count of unresolved issues currently in the Sprint (drives carry-over count). */
+  unresolvedIssueCount: number;
 
   excludedFromCalibration: boolean;
   calibrationSkipReason: string | null;
@@ -75,6 +77,7 @@ const KEYS = [
   'scpCurrentEffortMinutes',
   'scpCompletedOriginalEffortMinutes',
   'scpObservedFocusFactor',
+  'scpUnresolvedIssueCount',
   'scpExcludedFromCalibration',
   'scpCalibrationSkipReason',
   'scpMetricsRevision',
@@ -161,6 +164,7 @@ export class SprintRepository {
       currentEffortMinutes: num(raw.scpCurrentEffortMinutes, 0),
       completedOriginalEffortMinutes: num(raw.scpCompletedOriginalEffortMinutes, 0),
       observedFocusFactor: nullableNum(raw.scpObservedFocusFactor),
+      unresolvedIssueCount: num(raw.scpUnresolvedIssueCount, 0),
       excludedFromCalibration: bool(raw.scpExcludedFromCalibration),
       calibrationSkipReason: nullableStr(raw.scpCalibrationSkipReason),
       metricsRevision: num(raw.scpMetricsRevision, 0),
@@ -229,6 +233,7 @@ export class SprintRepository {
       currentEffortMinutes: number;
       completedOriginalEffortMinutes: number;
       observedFocusFactor: number | null;
+      unresolvedIssueCount: number;
       metricsRevision: number;
       status: DataIntegrityStatus;
       recalculatedAt: number;
@@ -243,6 +248,7 @@ export class SprintRepository {
       scpCurrentEffortMinutes: metrics.currentEffortMinutes,
       scpCompletedOriginalEffortMinutes: metrics.completedOriginalEffortMinutes,
       scpObservedFocusFactor: metrics.observedFocusFactor,
+      scpUnresolvedIssueCount: metrics.unresolvedIssueCount,
       scpMetricsRevision: metrics.metricsRevision,
       scpMetricsDirty: false,
       scpDataIntegrityStatus: metrics.status,

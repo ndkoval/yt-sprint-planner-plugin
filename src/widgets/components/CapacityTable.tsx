@@ -81,6 +81,9 @@ export function CapacityTable({
             Assigned
           </th>
           <th style={headStyle} scope="col">
+            Load (committed / capacity)
+          </th>
+          <th style={headStyle} scope="col">
             Note
           </th>
           <th style={headStyle} scope="col">
@@ -125,19 +128,45 @@ export function CapacityTable({
                 )}
               </td>
               <td style={cellStyle}>
+                {formatDaysValue(assignedEffort[row.userId]?.currentEffortMinutes ?? 0, hoursPerDay)}
+              </td>
+              <td style={cellStyle}>
                 {(() => {
-                  const assignedMinutes = assignedEffort[row.userId]?.currentEffortMinutes ?? 0;
-                  const over = assignedMinutes > row.availableMinutes;
+                  // Committed = Original Effort of this person's assigned issues (Jira's
+                  // per-person commitment); compared to their available capacity.
+                  const committed = assignedEffort[row.userId]?.originalEffortMinutes ?? 0;
+                  const capacity = row.availableMinutes;
+                  const ratio = capacity > 0 ? committed / capacity : committed > 0 ? Infinity : 0;
+                  const over = committed > capacity;
+                  const pct = Math.min(100, Math.round(ratio * 100));
+                  const barColor = over ? 'var(--ring-error-color, #c0341d)' : 'var(--ring-success-color, #1a936f)';
                   return (
-                    <span
-                      title={
-                        over ? 'Assigned work exceeds this person’s available capacity' : undefined
-                      }
-                      style={over ? { color: 'var(--ring-error-color, #c0341d)', fontWeight: 'bold' } : undefined}
+                    <div
+                      title={`${formatDaysValue(committed, hoursPerDay)}d committed of ${formatDaysValue(capacity, hoursPerDay)}d available`}
                     >
-                      {formatDaysValue(assignedMinutes, hoursPerDay)}
-                      {over ? ' ⚠' : ''}
-                    </span>
+                      <div
+                        style={{
+                          width: 96,
+                          height: 8,
+                          borderRadius: 4,
+                          background: 'var(--ring-line-color, #e0e0e0)',
+                          overflow: 'hidden',
+                        }}
+                        role="img"
+                        aria-label={`Load for ${row.displayNameSnapshot}: ${formatDaysValue(committed, hoursPerDay)} of ${formatDaysValue(capacity, hoursPerDay)} days`}
+                      >
+                        <div style={{ width: `${pct}%`, height: '100%', background: barColor }} />
+                      </div>
+                      <span
+                        style={{
+                          font: 'var(--ring-font-smaller)',
+                          color: over ? 'var(--ring-error-color, #c0341d)' : 'var(--ring-secondary-color)',
+                        }}
+                      >
+                        {formatDaysValue(committed, hoursPerDay)}/{formatDaysValue(capacity, hoursPerDay)}
+                        {over ? ' ⚠ over' : ''}
+                      </span>
+                    </div>
                   );
                 })()}
               </td>

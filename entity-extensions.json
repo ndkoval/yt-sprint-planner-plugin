@@ -24,6 +24,7 @@
     "scpCurrentEffortMinutes": { "type": "integer" },
     "scpCompletedOriginalEffortMinutes": { "type": "integer" },
     "scpObservedFocusFactor": { "type": "float" },
+    "scpUnresolvedIssueCount": { "type": "integer" },
 
     "scpExcludedFromCalibration": { "type": "boolean" },
     "scpCalibrationSkipReason": { "type": "string" },

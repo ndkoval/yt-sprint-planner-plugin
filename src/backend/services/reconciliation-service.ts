@@ -84,6 +84,7 @@ export class ReconciliationService {
       currentEffortMinutes: metrics.currentEffortMinutes,
       completedOriginalEffortMinutes: metrics.completedOriginalEffortMinutes,
       observedFocusFactor: metrics.observedFocusFactor,
+      unresolvedIssueCount: metrics.unresolvedIssueCount,
       metricsRevision: record.metricsRevision + 1,
       status: 'up-to-date',
       recalculatedAt: now,
@@ -132,5 +133,6 @@ function emptyMetrics(): ComputedMetrics {
     issuesMissingOriginalEffort: [],
     assignedEffort: {},
     unassignedEffort: { originalEffortMinutes: 0, currentEffortMinutes: 0 },
+    unresolvedIssueCount: 0,
   };
 }

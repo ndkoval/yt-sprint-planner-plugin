@@ -157,6 +157,37 @@ describe('POST /sprints/create-next', () => {
     expect(view.focusFactorSource).toBe('calculated');
   });
 
+  it('carries over unfinished issues into the new Sprint when requested', async () => {
+    const fake = seedWorld();
+    fake.currentUserId = MANAGER.id;
+    fake.grantBoardPermission(BOARD_ID, MANAGER.id);
+    fake.seedManagedSprint({
+      boardId: BOARD_ID,
+      sprint: nativeSprint(),
+      projectId: PROJECT_ID,
+      sequence: 1,
+      focusFactor: 0.7,
+      capacity: teamCapacity(),
+      issues: [
+        { id: 'U-1', originalEffortMinutes: 1200, currentEffortMinutes: 600, resolved: false, resolvedAt: null },
+        { id: 'U-2', originalEffortMinutes: 900, currentEffortMinutes: 900, resolved: false, resolvedAt: null },
+        { id: 'D-1', originalEffortMinutes: 600, currentEffortMinutes: 0, resolved: true, resolvedAt: Date.UTC(2026, 0, 10) },
+      ],
+    });
+
+    const created = (
+      await request(app(fake), 'POST', '/sprints/create-next', {
+        body: { moveUnresolvedIssues: true },
+      })
+    ).body as SprintView;
+
+    // The two unresolved issues moved to the new Sprint; the completed one stayed.
+    const newView = (await request(app(fake), 'GET', `/sprints/${created.id}`)).body as SprintView;
+    expect(newView.unresolvedIssueCount).toBe(2);
+    const oldView = (await request(app(fake), 'GET', '/sprints/sprint-1')).body as SprintView;
+    expect(oldView.unresolvedIssueCount).toBe(0);
+  });
+
   it('is idempotent: resuming an identical-dates sprint does not duplicate', async () => {
     const fake = seedWorld();
     fake.currentUserId = MANAGER.id;

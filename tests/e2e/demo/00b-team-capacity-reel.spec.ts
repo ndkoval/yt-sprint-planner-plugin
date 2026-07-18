@@ -30,7 +30,7 @@ test.describe('Marketing reel — team capacity', () => {
     await showTitleCard(page, 'Plan capacity with your team', 'Everyone sets their own availability');
     await cap.say('Plan a Sprint with your whole team');
     await humanClick(page, page.getByRole('button', { name: 'Create next Sprint' }));
-    await expect(page.getByText('AppGlass 2026-S3')).toBeVisible();
+    await expect(page.getByText('AppGlass 2026-S3', { exact: true })).toBeVisible();
     await humanClick(page, page.getByRole('button', { name: 'Create Sprint' }));
     await expect(page.getByText('AppGlass 2026-S3').first()).toBeVisible({ timeout: 15_000 });
     const sprintId = await page.evaluate(async (api) => {

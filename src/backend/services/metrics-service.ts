@@ -32,6 +32,8 @@ export interface ComputedMetrics {
   assignedEffort: Record<string, AssigneeEffort>;
   /** Effort on issues left unassigned. */
   unassignedEffort: AssigneeEffort;
+  /** Count of unresolved issues currently in the Sprint (for the carry-over prompt). */
+  unresolvedIssueCount: number;
 }
 
 /** Map a transport issue to the domain effort issue. */
@@ -77,6 +79,7 @@ export function computeMetrics(
     issuesMissingOriginalEffort: effort.issuesMissingOriginalEffort,
     assignedEffort: effort.byAssignee,
     unassignedEffort: effort.unassigned,
+    unresolvedIssueCount: issues.filter((i) => !i.resolved).length,
   };
 }
 

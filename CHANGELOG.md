@@ -4,6 +4,12 @@ All notable changes to the Sprint Capacity Planner are documented here. The form
 
 ## [Unreleased]
 
+### Added (Jira-aligned planning)
+
+- **Carry over unfinished work.** Create-next now matches Jira's Complete-Sprint step: the dialog names the exact count of unresolved issues in the latest Sprint and moves them into the new Sprint when opted in. `SprintView.unresolvedIssueCount` and `SprintSummary.unresolvedIssueCount` surface the count (persisted as `scpUnresolvedIssueCount`); the count in the dialog is always derived from the **latest** managed Sprint (the one being completed), not whichever Sprint is being viewed. Covered by unit + contract tests and the create-next / product-walkthrough demos.
+- **Capacity-vs-committed indicators.** The capacity table gains a **Load (committed / capacity)** bar per person — committed Original Effort vs that person's available days, turning red with "⚠ over" when over-committed — and the capacity summary gains a **"what fits"** banner comparing committed Original Effort against planned capacity for the whole Sprint. New pure helper `committedFitMinutes` (unit-tested), asserted by the `09-assignment` demo.
+- **Jira alignment documented.** `docs/JIRA_ALIGNMENT.md` maps our concepts and workflow onto Jira's (Original Effort ↔ "committed" estimate, Current Effort ↔ remaining, learned Focus Factor + Planned Capacity ↔ velocity/capacity, carry-over ↔ Complete Sprint) and records the adjustments made for terminology parity.
+
 ### Changed (simplification)
 
 - **Removed capacity confirmation entirely** — it was a redundant extra step. Gone from the model (`CapacityRow.confirmed`), the API (confirm/unconfirm endpoints, `confirmedCapacityMinutes`), the capacity table (Confirmed column) and summary (Participants-confirmed / Confirmed-capacity). The availability reminder workflow now nudges people who haven't *set* their availability instead.

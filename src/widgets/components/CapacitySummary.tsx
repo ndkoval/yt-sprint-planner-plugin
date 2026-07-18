@@ -1,7 +1,7 @@
 import React from 'react';
 import type { SprintView } from '../../shared/api';
 import { formatDays } from '../../shared/units';
-import { remainingCapacityMinutes } from '../../domain/capacity/capacity';
+import { committedFitMinutes, remainingCapacityMinutes } from '../../domain/capacity/capacity';
 import { formatFocusFactor } from './format';
 import { MetricList, type Metric } from './metric-row';
 
@@ -11,8 +11,9 @@ export interface CapacitySummaryProps {
 }
 
 /**
- * §6.4 capacity summary: Participants Confirmed X/Y, Raw, Confirmed, Focus Factor,
- * Planned. Minute values render as days.
+ * §6.4 capacity summary: Raw / Focus Factor / Planned / Remaining capacity, plus a
+ * "what fits" banner comparing committed Original Effort against planned capacity.
+ * Minute values render as days.
  */
 export function CapacitySummary({ sprint, hoursPerDay }: CapacitySummaryProps): React.JSX.Element {
   const metrics: Metric[] = [
@@ -28,9 +29,6 @@ export function CapacitySummary({ sprint, hoursPerDay }: CapacitySummaryProps): 
       hint: 'Raw capacity × focus factor',
     },
     {
-      // Planned capacity minus the current (remaining) effort on unresolved issues.
-      // Updates automatically as issues are added/estimated/resolved (via workflows +
-      // reconciliation). Negative means the Sprint is over-committed.
       label: 'Remaining capacity',
       value: formatDays(
         remainingCapacityMinutes(sprint.plannedCapacityMinutes, sprint.currentEffortMinutes),
@@ -40,9 +38,30 @@ export function CapacitySummary({ sprint, hoursPerDay }: CapacitySummaryProps): 
     },
   ];
 
+  // "What fits": committed Original Effort vs planned capacity (the Jira capacity-vs-
+  // commitment check). Positive headroom = it fits; negative = over-committed.
+  const headroom = committedFitMinutes(sprint.plannedCapacityMinutes, sprint.originalEffortMinutes);
+  const over = headroom < 0;
+  const fitStyle: React.CSSProperties = {
+    marginTop: 'calc(var(--ring-unit) * 2)',
+    padding: 'calc(var(--ring-unit) * 1) calc(var(--ring-unit) * 1.5)',
+    borderRadius: 'var(--ring-border-radius, 6px)',
+    font: 'var(--ring-font)',
+    fontWeight: 'bold',
+    color: over ? 'var(--ring-error-color, #c0341d)' : 'var(--ring-success-color, #1a936f)',
+    background: over ? 'rgba(192,52,29,0.08)' : 'rgba(26,147,111,0.08)',
+  };
+
   return (
     <section aria-label="Capacity summary">
       <MetricList metrics={metrics} />
+      <div role="status" aria-live="polite" style={fitStyle}>
+        Committed {formatDays(sprint.originalEffortMinutes, hoursPerDay)} vs planned{' '}
+        {formatDays(sprint.plannedCapacityMinutes, hoursPerDay)} —{' '}
+        {over
+          ? `over by ${formatDays(-headroom, hoursPerDay)}`
+          : `${formatDays(headroom, hoursPerDay)} headroom (it fits)`}
+      </div>
     </section>
   );
 }

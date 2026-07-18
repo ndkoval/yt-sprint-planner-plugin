@@ -16,6 +16,8 @@ test.describe('Per-assignee planning', () => {
 
     const assignedCell = (name: string) =>
       page.locator('tr', { hasText: name }).locator('td').nth(3);
+    const loadCell = (name: string) =>
+      page.locator('tr', { hasText: name }).locator('td').nth(4);
     const unassigned = page
       .locator('dt', { hasText: 'Unassigned' })
       .locator('xpath=following-sibling::dd');
@@ -26,6 +28,18 @@ test.describe('Per-assignee planning', () => {
     await expect(assignedCell('Charlie Diaz')).toHaveText('0');
     // The summary metric rounds to one decimal (1.25d → "1.3d"); table cells show 2 decimals.
     await expect(unassigned).toHaveText('1.3d');
+
+    // Load column = committed Original Effort vs available capacity (the per-person
+    // capacity-vs-commitment indicator). Alice is committed 15d (AG-10 + AG-11) against
+    // 8d available → over; Charlie carries nothing.
+    await expect(loadCell('Alice Smith')).toContainText('15/8');
+    await expect(loadCell('Alice Smith')).toContainText('⚠ over');
+    await expect(loadCell('Charlie Diaz')).toContainText('0/');
+
+    // Sprint-level "what fits" banner: committed Original Effort vs planned capacity.
+    const fitBanner = page.getByRole('status').filter({ hasText: 'Committed' });
+    await expect(fitBanner).toBeVisible();
+    await expect(fitBanner).toContainText('vs planned');
 
     // Plan more work: assign a task to Charlie and add one that stays unassigned.
     await page.evaluate(async () => {

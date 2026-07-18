@@ -10,7 +10,7 @@
  * Degrades gracefully: if `say` (TTS) or ffmpeg/ffprobe are unavailable (e.g. Linux CI),
  * it logs and skips without failing the build.
  */
-import { mkdir, readFile, readdir, rm, access } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, access, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -156,7 +156,10 @@ runMain('render-reels', async (log) => {
         '-map', '1:a:0',
         '-c:v', 'libx264',
         '-pix_fmt', 'yuv420p',
+        // Normalise the narration to a consistent, clearly-audible loudness.
+        '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
         '-c:a', 'aac',
+        '-b:a', '160k',
         '-t', String(dur > 0 ? dur : 60),
         out,
       ],
@@ -171,5 +174,24 @@ runMain('render-reels', async (log) => {
   }
 
   await rm(work, { recursive: true, force: true });
-  log.info(`rendered ${rendered}/${REELS.length} voiced reel(s) -> ${OUT_DIR}`);
+
+  // A tiny index so the VOICED reels are easy to find and play (the Playwright report's
+  // .webm videos are silent — Playwright can't record audio; the narration is here).
+  const cards = REELS.map(
+    (r) =>
+      `<section><h2>${r.title}</h2><video controls preload="metadata" src="${r.vtt}.mp4"></video></section>`,
+  ).join('\n');
+  const indexHtml = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<title>Sprint Capacity Planner — demo reels (with voiceover)</title>
+<style>body{font:15px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;padding:28px;background:#0b1020;color:#e8eaf0}
+h1{margin:0 0 4px} p.sub{color:#9aa3b2;margin:0 0 24px}
+section{margin:0 0 28px} h2{font-size:16px;margin:0 0 8px}
+video{width:100%;max-width:960px;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.4);background:#000}</style></head>
+<body><h1>Demo reels — with voiceover</h1>
+<p class="sub">These .mp4 files have narration + captions. Note: the Playwright report videos (.webm) are silent — Playwright cannot record audio.</p>
+${cards}
+</body></html>`;
+  await writeFile(path.join(OUT_DIR, 'index.html'), indexHtml);
+
+  log.info(`rendered ${rendered}/${REELS.length} voiced reel(s) -> ${OUT_DIR} (open index.html)`);
 });

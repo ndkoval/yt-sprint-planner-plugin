@@ -5,6 +5,7 @@ import {
   rawCapacityMinutes,
   plannedCapacityMinutes,
   remainingCapacityMinutes,
+  committedFitMinutes,
   reapplyDefaults,
 } from '../../src/domain/capacity/capacity.js';
 import { makeDoc, makeRow } from '../fixtures/capacity.js';
@@ -90,6 +91,21 @@ describe('remainingCapacityMinutes', () => {
     const afterAddingTask = remainingCapacityMinutes(planned, 2400 + 1800);
     expect(afterAddingTask).toBeLessThan(before);
     expect(before - afterAddingTask).toBe(1800);
+  });
+});
+
+describe('committedFitMinutes', () => {
+  it('is positive headroom when committed work fits the capacity', () => {
+    expect(committedFitMinutes(10000, 8000)).toBe(2000);
+  });
+
+  it('is negative when over-committed', () => {
+    expect(committedFitMinutes(8000, 10000)).toBe(-2000);
+  });
+
+  it('works per person (available vs assigned) and per Sprint (planned vs original)', () => {
+    expect(committedFitMinutes(4800, 4800)).toBe(0); // exactly fits
+    expect(committedFitMinutes(2400, 4800)).toBe(-2400); // one person over their capacity
   });
 });
 

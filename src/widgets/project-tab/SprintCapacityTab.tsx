@@ -246,11 +246,17 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
   // The "Create next Sprint" preview is always derived from the latest managed Sprint
   // (highest sequence), matching the backend which creates after the latest regardless
   // of which Sprint is selected in the UI.
-  const latestManagedSprint = useMemo<{ finish: string; sequence: number } | null>(() => {
+  const latestManagedSprint = useMemo<
+    { finish: string; sequence: number; unresolvedIssueCount: number } | null
+  >(() => {
     const managed = sprints.filter((s) => s.managed);
     if (managed.length === 0) return null;
     const latest = managed.reduce((a, b) => (b.sequence > a.sequence ? b : a));
-    return { finish: latest.finish, sequence: latest.sequence };
+    return {
+      finish: latest.finish,
+      sequence: latest.sequence,
+      unresolvedIssueCount: latest.unresolvedIssueCount,
+    };
   }, [sprints]);
 
   const updateDraft = useCallback(
@@ -484,6 +490,7 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
         <CreateNextSprintDialog
           show={showCreate}
           preview={computePreview(config, latestManagedSprint)}
+          carryOverCount={latestManagedSprint?.unresolvedIssueCount ?? 0}
           creating={creating}
           onCancel={() => setShowCreate(false)}
           onCreate={createNextSprint}

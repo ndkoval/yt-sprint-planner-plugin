@@ -79,6 +79,8 @@ export interface SprintView {
   assignedEffort: Record<string, AssigneeEffortView>;
   /** Effort on issues left unassigned (preserving project-direction ownership). */
   unassignedEffort: AssigneeEffortView;
+  /** Unresolved issues currently in the Sprint (how many would carry over). */
+  unresolvedIssueCount: number;
 }
 
 /** Effort attributed to one assignee (or the unassigned bucket), in minutes. */
@@ -102,6 +104,8 @@ export interface SprintSummary {
   managed: boolean;
   /** App sequence number for managed Sprints; 0 for unmanaged. */
   sequence: number;
+  /** Cached count of unresolved issues (for the carry-over preview); 0 for unmanaged. */
+  unresolvedIssueCount: number;
 }
 
 /** GET /config */

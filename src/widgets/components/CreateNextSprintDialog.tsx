@@ -16,6 +16,8 @@ export interface CreateNextSprintDialogProps {
   show: boolean;
   /** Computed preview of the next Sprint; omitted while loading. */
   preview?: NextSprintPreview;
+  /** How many unresolved issues would carry over from the current Sprint. */
+  carryOverCount?: number;
   creating?: boolean;
   onCancel(): void;
   onCreate(request: CreateNextSprintRequest): void;
@@ -27,6 +29,7 @@ const rowStyle: React.CSSProperties = { marginBottom: 'calc(var(--ring-unit) * 2
 export function CreateNextSprintDialog({
   show,
   preview,
+  carryOverCount = 0,
   creating = false,
   onCancel,
   onCreate,
@@ -89,13 +92,30 @@ export function CreateNextSprintDialog({
 
         <div style={rowStyle}>
           <Checkbox
-            label="Move unresolved issues from the current Sprint"
+            label={
+              carryOverCount > 0
+                ? `Carry over ${carryOverCount} unfinished issue${carryOverCount === 1 ? '' : 's'} from the current Sprint`
+                : 'Carry over unfinished issues from the current Sprint'
+            }
             checked={moveUnresolvedIssues}
             disabled={creating}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
               setMoveUnresolvedIssues(e.target.checked)
             }
           />
+          {carryOverCount > 0 ? (
+            <div
+              style={{
+                marginTop: '4px',
+                marginLeft: 'calc(var(--ring-unit) * 3)',
+                font: 'var(--ring-font-smaller)',
+                color: 'var(--ring-secondary-color)',
+              }}
+            >
+              {carryOverCount} unresolved issue{carryOverCount === 1 ? '' : 's'} will move to{' '}
+              {preview ? preview.name : 'the next Sprint'}.
+            </div>
+          ) : null}
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--ring-unit)' }}>

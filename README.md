@@ -15,12 +15,13 @@ A YouTrack App that adds **capacity planning, computed delivery metrics, and a o
 
 | Capability | Notes |
 | --- | --- |
-| Per-person capacity planning per Sprint | Working-days × hours (everyone at 100%), with per-row available/confirmed/note overrides |
-| Computed capacity metrics | Default, Raw, Confirmed, Planned capacity |
+| Per-person capacity planning per Sprint | Working-days × hours (everyone at 100%), with per-row available/note overrides |
+| Computed capacity metrics | Default, Raw, Planned, Remaining capacity |
 | Computed effort metrics | Original, Current, Completed Original effort, plus missing-effort warnings |
-| Per-person task planning | Assign tasks to people to see each person's load (with an over-capacity ⚠), and leave tasks **Unassigned** to preserve project-direction ownership |
+| Per-person task planning | Assign tasks to people to see each person's **Load (committed / capacity)** bar (with an over-capacity ⚠), and leave tasks **Unassigned** to preserve project-direction ownership |
+| Capacity-vs-committed "what fits" | Sprint-level banner comparing committed Original Effort against planned capacity |
 | Learned Focus Factor | Observed factor per completed Sprint; auto-calibrated next factor with bounds |
-| One-click next Sprint | Idempotent create-next flow with computed dates, name, sequence, seeded capacity |
+| One-click next Sprint | Idempotent create-next flow with computed dates, name, sequence, seeded capacity, and optional **carry-over** of unfinished issues |
 | Manager diagnostics + export/import | Data-health view and a versioned JSON backup bundle |
 
 ## What it deliberately omits
@@ -32,7 +33,9 @@ This app intentionally does **not**:
 - provide **locks / unlock**, **manual finalize**, or an **approval gate** on Sprints;
 - track **spent time** or **work items**.
 
-Availability confirmation and reminders are **informational only** and never block anything.
+Availability reminders are **informational only** and never block anything.
+
+For how these concepts map onto Jira's sprint model (Original Effort ↔ committed estimate, learned Focus Factor ↔ velocity/capacity, carry-over ↔ Complete Sprint), see [`docs/JIRA_ALIGNMENT.md`](docs/JIRA_ALIGNMENT.md).
 
 ---
 

@@ -59,5 +59,6 @@ export function toSprintView(
     issuesMissingOriginalEffort,
     assignedEffort: assignment.assignedEffort,
     unassignedEffort: assignment.unassignedEffort,
+    unresolvedIssueCount: live?.unresolvedIssueCount ?? 0,
   };
 }
