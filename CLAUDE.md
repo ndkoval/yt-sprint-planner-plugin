@@ -7,9 +7,16 @@
   needs YouTrack's Kanban board, it must be YouTrack's actual board.
 - **The Kanban board in demos must be the standard YouTrack board.** Do NOT develop a
   custom board.
-- **No Docker.** Launch a real, local YouTrack instance directly on the host (download a
-  pinned distribution, unpack, run its launcher), or point tests at a real remote/Cloud
-  instance. See `scripts/provision-real-youtrack.mjs` and [[real-yt-no-docker]].
+- **Hosting real YouTrack (platform-dependent):**
+  - The app's **project widgets** (project tab + settings) require YouTrack **2024.3+**
+    (`PROJECT_TAB` / `PROJECT_SETTINGS` extension points). On Apple-Silicon the 2024.3+
+    standalone build can't boot (GraalVM/Truffle 22), so run it in **Docker** forced to
+    `--platform linux/amd64` (user approved Docker for this on 2026-07-18). Image:
+    `jetbrains/youtrack:2024.3.148430`.
+  - The **native YouTrack board** works on the standalone **2024.1.34109** build, which
+    boots locally on arm64 with no Docker (bundled mac-x64 JRE under Rosetta). See
+    `scripts/provision-real-youtrack.mjs` and [[real-yt-no-docker]].
+  - A real remote/Cloud instance is also acceptable.
 - If a real YouTrack genuinely cannot be brought up in the current environment, that is a
   **blocker to surface to the user** — not something to paper over with a stub. State the
   exact obstacle and ask how to proceed.
