@@ -35,6 +35,20 @@ test.describe('Marketing reel — product walkthrough', () => {
     await moveTo(page, page.getByText('Raw capacity'));
     await cap.say('See raw, planned and remaining capacity for the active Sprint at a glance');
     await expect(page.getByText('Remaining capacity', { exact: true })).toBeVisible();
+
+    // Per-person load: committed Original Effort vs each person's available capacity.
+    await moveTo(page, page.getByRole('columnheader', { name: 'Load (committed / capacity)' }));
+    await cap.say('Every person shows committed work against their capacity — over-commitment turns red');
+    await expect(
+      page.locator('tr', { hasText: 'Alice Smith' }).locator('td').nth(4),
+    ).toContainText('⚠ over');
+
+    // Sprint-level "what fits" check — committed effort vs planned capacity.
+    const fitBanner = page.getByRole('status').filter({ hasText: 'Committed' });
+    await moveTo(page, fitBanner);
+    await cap.say('And the "what fits" banner shows at a glance whether the plan fits the Sprint');
+    await expect(fitBanner).toContainText('vs planned');
+
     await expect(page.getByRole('heading', { name: 'Data health' })).toBeVisible();
     await assertAccessible(page, info, 'walkthrough-overview');
     await settle(page, 1100);

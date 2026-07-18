@@ -29,6 +29,7 @@ const REELS = [
   { vtt: '02-team-capacity', dir: '00b-team-capacity', title: 'Team capacity' },
   { vtt: '03-team-configuration', dir: '00c-team-configuration', title: 'Team configuration' },
   { vtt: '04-installation', dir: '00d-installation', title: 'Installation' },
+  { vtt: '05-per-person-planning', dir: '09-assignment', title: 'Per-person planning' },
 ];
 
 function have(bin, arg = '-version') {
