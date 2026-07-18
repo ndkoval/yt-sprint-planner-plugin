@@ -146,9 +146,17 @@ export function createApp(deps: AppDeps): Router {
     // First-run bootstrap: manager status is derived from the config, so before any config
     // exists no one would be a manager and the app could never be set up. Allow a board
     // administrator to establish the INITIAL config; after that, only managers may change it.
-    const allowed = existing.configured
-      ? canEditSettings(principal)
-      : await client.canManageBoard(parsed.config.boardId);
+    // The permission is anchored to THIS request's projectId (never a caller-supplied id):
+    // the chosen board must belong to the project being configured, closing an IDOR where a
+    // caller bootstraps project A's config using a board they administer in project B.
+    let allowed: boolean;
+    if (existing.configured) {
+      allowed = canEditSettings(principal);
+    } else {
+      const board = await client.getBoard(parsed.config.boardId);
+      const boardInProject = board !== null && board.projectIds.includes(projectId);
+      allowed = boardInProject && (await client.canManageBoard(parsed.config.boardId));
+    }
     if (!allowed) throw forbidden('Only managers can change settings.');
     const configService = new ConfigService(client, configRepo, projectId);
     const result = await configService.save(parsed.config, parsed.expectedRevision);
