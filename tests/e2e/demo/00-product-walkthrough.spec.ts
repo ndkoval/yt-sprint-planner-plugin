@@ -6,10 +6,10 @@ import {
   assertAccessible,
   humanClick,
   humanFill,
-  toggleConfirm,
   moveTo,
   settle,
   Captioner,
+  showTitleCard,
 } from './helpers.js';
 
 const API = '/api/apps/sprint-capacity-planner/backend';
@@ -18,9 +18,9 @@ const API = '/api/apps/sprint-capacity-planner/backend';
  * Marketing reel #1 — the comprehensive product walkthrough. One continuous, deterministic,
  * subtitled journey through the whole value story, paced and cursored like a real person:
  * see a Sprint's capacity & effort, create the next Sprint in one click, have a team member
- * set and confirm availability, watch remaining capacity update automatically as work is
- * added, and open the board to see the issues. Recorded end-to-end as one 720p video with
- * on-screen captions + a WebVTT subtitle track.
+ * set availability, watch remaining capacity update automatically as work is added, and
+ * open the Kanban board to see the issues. Recorded end-to-end as one 720p video with a
+ * title card, on-screen captions + a WebVTT subtitle track.
  */
 test.describe('Marketing reel — product walkthrough', () => {
   test('plan a Sprint end to end', async ({ page, context }, info) => {
@@ -29,6 +29,7 @@ test.describe('Marketing reel — product walkthrough', () => {
 
     // ── 1. The planner on the active Sprint: capacity, effort, remaining, data health.
     await openTab(page, 'manager', 'sprint-2');
+    await showTitleCard(page, 'Sprint Capacity Planner', 'Plan two-week Sprints on native YouTrack');
     await cap.say('Sprint Capacity Planner — capacity planning on top of native YouTrack Sprints');
     await expect(page.getByText('Deliver a usable first customer deployment')).toBeVisible();
     await moveTo(page, page.getByText('Raw capacity'));
@@ -64,15 +65,13 @@ test.describe('Marketing reel — product walkthrough', () => {
 
     // ── 3. A team member sets availability and confirms it (never blocks anyone).
     await openTab(page, 'alice', sprintId);
-    await cap.say('Each team member sets their own availability…');
+    await cap.say('Each team member sets their own availability — no confirmation step');
     await humanFill(page, page.getByLabel('Available capacity in days for Alice Smith'), '8');
     await page.getByLabel('Available capacity in days for Alice Smith').blur();
     await expect(page.getByLabel('Available capacity in days for Alice Smith')).toHaveValue('8', {
       timeout: 15_000,
     });
-    await cap.say('…and confirms it. Confirmation is informational — it never blocks the team');
-    await toggleConfirm(page, 'Alice Smith');
-    await expect(page.getByText('1/3')).toBeVisible({ timeout: 15_000 });
+    await cap.say('Raw and planned capacity update as availability changes');
     await settle(page, 1000);
 
     // ── 4. Work is added on the board → remaining capacity updates automatically.
@@ -90,8 +89,10 @@ test.describe('Marketing reel — product walkthrough', () => {
         }).then((r) => r.ok),
       [sprintId] as const,
     );
-    await humanClick(page, page.getByRole('button', { name: 'Refresh' }));
-    await expect.poll(async () => (await remaining.textContent())?.trim()).not.toBe(remainingBefore);
+    // No Refresh button — the tab auto-refreshes and the number changes on its own.
+    await expect
+      .poll(async () => (await remaining.textContent())?.trim(), { timeout: 15_000 })
+      .not.toBe(remainingBefore);
     await settle(page, 1100);
 
     // ── 5. Open the board to see the issues behind the numbers.
@@ -102,10 +103,10 @@ test.describe('Marketing reel — product walkthrough', () => {
     await board.waitForLoadState('networkidle');
     await expect(board.getByRole('heading', { name: 'AppGlass Board' })).toBeVisible();
     await page.goto('/agiles/board-demo?as=manager', { waitUntil: 'networkidle' });
-    await cap.say('The native board is the single source of truth for the issues');
+    await cap.say('The native Kanban board is the single source of truth for the issues');
     await expect(page.getByRole('heading', { name: 'AppGlass Board' })).toBeVisible();
-    await expect(page.getByRole('cell', { name: 'AG-10', exact: true })).toBeVisible();
-    await moveTo(page, page.getByRole('cell', { name: 'AG-10', exact: true }));
+    await expect(page.getByText('AG-10', { exact: true })).toBeVisible();
+    await moveTo(page, page.getByText('AG-10', { exact: true }));
     await cap.say('Sprint Capacity Planner — plan with confidence, no busywork');
     await settle(page, 1600);
     await info.attach('walkthrough-board.png', {

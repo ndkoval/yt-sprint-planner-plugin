@@ -15,17 +15,8 @@ export interface CapacitySummaryProps {
  * Planned. Minute values render as days.
  */
 export function CapacitySummary({ sprint, hoursPerDay }: CapacitySummaryProps): React.JSX.Element {
-  const rows = Object.values(sprint.capacity.rows);
-  const total = rows.length;
-  const confirmed = rows.filter((r) => r.confirmed).length;
-
   const metrics: Metric[] = [
-    { label: 'Participants confirmed', value: `${confirmed}/${total}` },
     { label: 'Raw capacity', value: formatDays(sprint.rawCapacityMinutes, hoursPerDay) },
-    {
-      label: 'Confirmed capacity',
-      value: formatDays(sprint.confirmedCapacityMinutes, hoursPerDay),
-    },
     {
       label: 'Focus factor',
       value: formatFocusFactor(sprint.focusFactor),

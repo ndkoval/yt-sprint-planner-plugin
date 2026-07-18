@@ -1,15 +1,11 @@
 import { test, expect, openTab, guardErrors, assertAccessible } from './helpers.js';
 
 test.describe('Manager controls', () => {
-  test('recalculates and overrides the focus factor (no locks, always editable)', async ({
+  test('manager overrides the focus factor (no locks, always editable)', async ({
     page,
   }, info) => {
     const assertClean = guardErrors(page);
     await openTab(page, 'manager');
-
-    // Recalculate runs authoritative reconciliation and reports up-to-date (§6.6/§13).
-    await page.getByRole('button', { name: 'Recalculate' }).click();
-    await expect(page.getByText('Up to date')).toBeVisible({ timeout: 15_000 });
 
     // Manager-only Override focus factor (§11.6): requires a reason; records the change.
     await page.getByRole('button', { name: 'Override focus factor' }).click();

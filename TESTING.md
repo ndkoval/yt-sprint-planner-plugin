@@ -148,17 +148,20 @@ npm run demo:serve                           # (optional) serve the demo at http
 ```
 
 **Running the tests produces the demos.** `npm test` / `npm run test:all` end by recording the
-full demo suite. Two of the journeys are **marketing reels** — `00-product-walkthrough` and
-`00b-team-capacity-reel` — recorded like a real person: a visible gliding **cursor**, human
-pacing, **720p**, on-screen **subtitles** plus a **WebVTT** track under
-`artifacts/demo/subtitles/`. See also the launch [blog post](docs/blog/announcing-sprint-capacity-planner.md).
+full demo suite. Four of the journeys are **marketing reels** — `00-product-walkthrough`,
+`00b-team-capacity-reel`, `00c-team-configuration-reel`, `00d-installation-reel` — recorded like
+a real person: a branded **title card** at the start, a visible gliding **cursor**, human pacing,
+**720p**, on-screen **subtitles** plus a **WebVTT** track under `artifacts/demo/subtitles/`, and a
+**voiceover** `.mp4` under `artifacts/demo/reels/` (macOS `say` → timed narration muxed onto the
+video; skipped gracefully where TTS/ffmpeg are absent). See also the launch
+[blog post](docs/blog/announcing-sprint-capacity-planner.md).
 
-Journeys (10): **product walkthrough** and **team-capacity** (the two marketing reels),
-overview/metrics, create-next-Sprint, member availability (own-row-only editing), manager
-controls (recalculate + focus-factor override), settings, **team workflow** (create → set
-availability → confirm), **auto remaining capacity** (adding a task lowers remaining capacity
-automatically), and **sprint navigation** (switch Sprints + open the board to see issues and
-jump into a Sprint). Each records a video,
+Journeys (13): the four **marketing reels**, overview/metrics, create-next-Sprint, member
+availability (own-row-only editing), manager controls (focus-factor override), settings, **team
+workflow** (create → set availability), **auto remaining capacity** (adding a task lowers
+remaining capacity automatically — no Refresh), **sprint navigation** (switch Sprints + open the
+**Kanban board** to see issues and jump into a Sprint), and **per-assignee planning** (Assigned
+load + Unassigned bucket). Each records a video,
 runs an axe accessibility scan, and asserts no console/page errors. The suite is **deterministic
 and independent of run order** — an auto-fixture resets the harness world before every test, so
 these are plain web tests that need no AI to run. Chromium runs **headless** (no window steals

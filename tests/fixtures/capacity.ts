@@ -10,7 +10,6 @@ export function makeRow(overrides: Partial<CapacityRow> = {}): CapacityRow {
     defaultMinutes: 4800,
     availableMinutes: 4800,
     availableWasCustomized: false,
-    confirmed: false,
     note: '',
     updatedAt: 0,
     updatedBy: '1-1',

@@ -40,13 +40,6 @@ export function rawCapacityMinutes(doc: CapacityDocument): number {
   return enabledRows(doc).reduce((sum, r) => sum + r.availableMinutes, 0);
 }
 
-/** Confirmed Capacity = sum(availableMinutes) over confirmed, enabled participants. Informational. */
-export function confirmedCapacityMinutes(doc: CapacityDocument): number {
-  return enabledRows(doc)
-    .filter((r) => r.confirmed)
-    .reduce((sum, r) => sum + r.availableMinutes, 0);
-}
-
 /** Planned Capacity = Raw Capacity × Focus Factor. Rounded to whole minutes. */
 export function plannedCapacityMinutes(rawMinutes: number, focusFactor: number): number {
   if (focusFactor < 0) throw new RangeError(`focusFactor must be >= 0, got ${focusFactor}`);
@@ -63,12 +56,6 @@ export function remainingCapacityMinutes(
   currentEffortMinutes: number,
 ): number {
   return plannedMinutes - currentEffortMinutes;
-}
-
-/** Count of enabled participants who have confirmed, and the enabled total. */
-export function confirmationCounts(doc: CapacityDocument): { confirmed: number; total: number } {
-  const rows = enabledRows(doc);
-  return { confirmed: rows.filter((r) => r.confirmed).length, total: rows.length };
 }
 
 /**

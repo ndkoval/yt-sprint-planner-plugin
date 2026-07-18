@@ -88,10 +88,6 @@ export async function buildDemoWorld(): Promise<FakeYouTrack> {
   const s1Start = '2026-06-22';
   const s1Finish = '2026-07-05';
   const s1Cap = seedCapacityDocument(config, users, s1Start, s1Finish, DEMO.now - 20 * DAY);
-  // Mark everyone confirmed for the completed sprint.
-  for (const row of Object.values(s1Cap.rows)) {
-    row.confirmed = true;
-  }
   const s1Issues: YtIssue[] = [
     { id: 'AG-1', originalEffortMinutes: 4800, currentEffortMinutes: 0, resolved: true, resolvedAt: Date.UTC(2026, 5, 25) },
     { id: 'AG-2', originalEffortMinutes: 2400, currentEffortMinutes: 0, resolved: true, resolvedAt: Date.UTC(2026, 6, 1) },
@@ -112,11 +108,9 @@ export async function buildDemoWorld(): Promise<FakeYouTrack> {
   const s2Start = '2026-07-06';
   const s2Finish = '2026-07-19';
   const s2Cap = seedCapacityDocument(config, users, s2Start, s2Finish, DEMO.now - 4 * DAY);
-  // Alice customised availability + confirmed; Bob confirmed; Charlie pending with a note.
+  // Alice customised her availability with a note; Charlie has a note too.
   const alice = s2Cap.rows[PERSONAS.alice.id];
-  if (alice) { alice.availableMinutes = 3840; alice.availableWasCustomized = true; alice.confirmed = true; alice.note = 'Vacation Thu–Fri'; }
-  const bob = s2Cap.rows[PERSONAS.bob.id];
-  if (bob) { bob.confirmed = true; }
+  if (alice) { alice.availableMinutes = 3840; alice.availableWasCustomized = true; alice.note = 'Vacation Thu–Fri'; }
   const charlie = s2Cap.rows[PERSONAS.charlie.id];
   if (charlie) { charlie.note = 'Conference week 2'; }
   const s2Issues: YtIssue[] = [

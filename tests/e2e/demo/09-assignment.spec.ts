@@ -32,9 +32,8 @@ test.describe('Per-assignee planning', () => {
       await fetch('/__demo/add-issue?sprintId=sprint-2&originalMinutes=1440&currentMinutes=1440&assigneeId=1-3', { method: 'POST' });
       await fetch('/__demo/add-issue?sprintId=sprint-2&originalMinutes=480&currentMinutes=480', { method: 'POST' });
     });
-    await page.getByRole('button', { name: 'Refresh' }).click();
-
-    // Charlie now carries 3d; the unassigned bucket grew by 1d (1.25 → 2.25d) — automatically.
+    // Charlie now carries 3d; the unassigned bucket grew by 1d — reflected automatically
+    // by auto-refresh (no button to click).
     await expect(assignedCell('Charlie Diaz')).toHaveText('3', { timeout: 15_000 });
     await expect(unassigned).toHaveText('2.3d');
 

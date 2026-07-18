@@ -86,6 +86,48 @@ export function settle(page: Page, ms = 650): Promise<void> {
   return page.waitForTimeout(ms);
 }
 
+/**
+ * Show a full-screen title card at the very start of a reel so the recording "introduces
+ * itself" before the walkthrough begins. Displays for `ms`, then removes itself.
+ */
+export async function showTitleCard(
+  page: Page,
+  title: string,
+  subtitle: string,
+  ms = 2200,
+): Promise<void> {
+  await page.evaluate(
+    ([t, s]) => {
+      const el = document.createElement('div');
+      el.id = '__demo-titlecard';
+      el.style.cssText = [
+        'position:fixed','inset:0','z-index:2147483647','display:flex','flex-direction:column',
+        'align-items:center','justify-content:center','text-align:center',
+        'background:linear-gradient(135deg,#1a73e8,#0b3d91)','color:#fff',
+        "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+        'opacity:0','transition:opacity 0.35s ease',
+      ].join(';');
+      el.innerHTML =
+        '<div style="font-size:40px;font-weight:800;letter-spacing:-0.5px;max-width:80%">' +
+        (t as string) +
+        '</div><div style="font-size:20px;margin-top:14px;opacity:0.9;max-width:70%">' +
+        (s as string) +
+        '</div>';
+      document.body.appendChild(el);
+      requestAnimationFrame(() => (el.style.opacity = '1'));
+    },
+    [title, subtitle] as const,
+  );
+  await page.waitForTimeout(ms);
+  await page.evaluate(() => {
+    const el = document.getElementById('__demo-titlecard');
+    if (!el) return;
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 400);
+  });
+  await page.waitForTimeout(450);
+}
+
 // ── Subtitles ───────────────────────────────────────────────────────────────
 interface Cue {
   tMs: number;
@@ -148,18 +190,6 @@ export async function openSettings(page: Page, persona: Persona): Promise<void> 
   await page.goto(`/project-settings/index.html?as=${persona}&projectId=${PROJECT}`, {
     waitUntil: 'networkidle',
   });
-}
-
-/**
- * Toggle a participant's "Confirmed" box, human-style. Ring UI wraps the real checkbox in
- * a styled label, so we glide to and click the enclosing label (a raw input .check() may
- * not register).
- */
-export async function toggleConfirm(page: Page, displayName: string): Promise<void> {
-  const input = page.getByLabel(`Confirmed by ${displayName}`);
-  const label = input.locator('xpath=ancestor::label[1]');
-  await humanClick(page, label);
-  await expect(input).toBeChecked({ timeout: 15_000 });
 }
 
 /** Attach a console/page-error collector; call the returned assert at the end. */

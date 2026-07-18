@@ -66,47 +66,67 @@ function parseCookies(header: string | undefined): Record<string, string> {
  * a same-origin fetch against API_BASE and reads projectId from the query string.
  */
 /**
- * A minimal stand-in for the native YouTrack agile board that "Open board" opens. It
- * lists each Sprint's issues (from the demo issues endpoint) and links back into the
- * Sprint Capacity planner for that Sprint. Enough to demo "how issues look with the
- * current Sprints" and "go to a Sprint from there".
+ * A stand-in for the native YouTrack agile board that "Open board" opens — rendered as a
+ * Kanban board with **sprints enabled**: one swimlane per Sprint, three columns
+ * (To Do / In Progress / Done), and issue cards. Links back into the Sprint Capacity
+ * planner for each Sprint. Demonstrates "how issues look with the current Sprints" and
+ * "go to a Sprint from there".
  */
 function boardStubHtml(): string {
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"/><title>AppGlass Board</title>
+<html lang="en"><head><meta charset="utf-8"/><title>AppGlass Board — Kanban</title>
 <style>
-  body{font:14px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;padding:24px;color:#1f2326;background:#f7f8fa}
-  h1{font-size:20px;margin:0 0 4px} .sub{color:#737577;margin:0 0 20px}
-  .sprint{background:#fff;border:1px solid #dfe1e6;border-radius:8px;padding:16px;margin-bottom:16px}
-  .sprint h2{font-size:16px;margin:0 0 8px}
-  table{width:100%;border-collapse:collapse} th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #eee;font-size:13px}
-  th{color:#737577;font-weight:600} .resolved{color:#3a923a} .open{color:#1a73e8}
-  a.open-planner{display:inline-block;margin-top:10px;color:#1a73e8;text-decoration:none;font-weight:600}
+  body{font:14px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;padding:24px;color:#1f2326;background:#f4f5f7}
+  h1{font-size:20px;margin:0 0 2px} .sub{color:#737577;margin:0 0 20px}
+  .swimlane{background:#fff;border:1px solid #dfe1e6;border-radius:10px;padding:14px 16px;margin-bottom:18px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .lane-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .lane-head h2{font-size:16px;margin:0}
+  .cols{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .col{background:#f4f5f7;border-radius:8px;padding:10px;min-height:70px}
+  .col h3{font:600 12px/1 -apple-system,sans-serif;text-transform:uppercase;letter-spacing:.05em;color:#737577;margin:0 0 10px}
+  .col .count{color:#a4a7ab;font-weight:600}
+  .card{background:#fff;border:1px solid #e3e5e8;border-left:3px solid #1a73e8;border-radius:6px;padding:8px 10px;margin-bottom:8px;box-shadow:0 1px 1px rgba(0,0,0,.04)}
+  .card.done{border-left-color:#3a923a;opacity:.85}
+  .card .id{font-weight:700} .card .meta{color:#737577;font-size:12px;margin-top:3px}
+  .card .who{display:inline-block;margin-top:6px;font-size:11px;background:#eef1f5;color:#3b4048;border-radius:10px;padding:1px 8px}
+  a.open-planner{color:#1a73e8;text-decoration:none;font-weight:600;font-size:13px}
 </style></head>
 <body>
   <h1>AppGlass Board</h1>
-  <p class="sub">Native agile board — issues grouped by Sprint. Open one in the Sprint Capacity planner.</p>
+  <p class="sub">Kanban board — sprints enabled. One swimlane per Sprint; open one in the Sprint Capacity planner.</p>
   <div id="board" aria-live="polite">Loading…</div>
 <script>
 (async function(){
   var api='/api/apps/sprint-capacity-planner/backend';
   var as=(document.cookie.match(/demo_as=([^;]+)/)||[])[1]||'manager';
+  var names={'1-1':'Alice','1-2':'Bob','1-3':'Charlie','1-99':'Morgan'};
   var sprints=await (await fetch(api+'/sprints?projectId=proj-demo')).json();
   var root=document.getElementById('board'); root.innerHTML='';
+  var days=function(m){return m==null?'—':(Math.round((m/480)*100)/100)+'d';};
+  var COLS=[['To Do','todo'],['In Progress','doing'],['Done','done']];
+  var laneOf=function(it){
+    if(it.resolved) return 'done';
+    if(it.currentEffortMinutes!=null && it.originalEffortMinutes!=null && it.currentEffortMinutes<it.originalEffortMinutes) return 'doing';
+    return 'todo';
+  };
   for (var i=0;i<sprints.length;i++){
     var s=sprints[i];
     var issues=await (await fetch('/__demo/issues?sprintId='+encodeURIComponent(s.id))).json();
-    var mins=function(m){return m==null?'—':(Math.round((m/480)*100)/100)+'d';};
-    var rowsHtml=issues.map(function(it){
-      return '<tr><td>'+it.id+'</td><td>'+mins(it.originalEffortMinutes)+'</td><td>'+mins(it.currentEffortMinutes)+
-        '</td><td class="'+(it.resolved?'resolved':'open')+'">'+(it.resolved?'Resolved':'Open')+'</td></tr>';
-    }).join('');
-    var sec=document.createElement('div'); sec.className='sprint'; sec.setAttribute('data-sprint',s.id);
-    sec.innerHTML='<h2>'+s.name+'</h2>'+
-      '<table aria-label="Issues in '+s.name+'"><thead><tr><th>Issue</th><th>Original</th><th>Current</th><th>State</th></tr></thead>'+
-      '<tbody>'+(rowsHtml||'<tr><td colspan=4>No issues</td></tr>')+'</tbody></table>'+
-      '<a class="open-planner" href="/project-tab/index.html?projectId=proj-demo&as='+as+'&sprint='+encodeURIComponent(s.id)+'">Open “'+s.name+'” in Sprint Capacity →</a>';
-    root.appendChild(sec);
+    var colHtml=function(key){
+      var cards=issues.filter(function(it){return laneOf(it)===key;}).map(function(it){
+        var who=it.assigneeId?('<span class="who">'+(names[it.assigneeId]||it.assigneeId)+'</span>'):'<span class="who">Unassigned</span>';
+        return '<div class="card '+(it.resolved?'done':'')+'"><div class="id">'+it.id+'</div>'+
+          '<div class="meta">Current '+days(it.currentEffortMinutes)+' · Est '+days(it.originalEffortMinutes)+'</div>'+who+'</div>';
+      }).join('');
+      var label=COLS.filter(function(c){return c[1]===key;})[0][0];
+      var n=issues.filter(function(it){return laneOf(it)===key;}).length;
+      return '<div class="col"><h3>'+label+' <span class="count">'+n+'</span></h3>'+(cards||'')+'</div>';
+    };
+    var lane=document.createElement('div'); lane.className='swimlane'; lane.setAttribute('data-sprint',s.id);
+    lane.innerHTML='<div class="lane-head"><h2>'+s.name+'</h2>'+
+      '<a class="open-planner" href="/project-tab/index.html?projectId=proj-demo&as='+as+'&sprint='+encodeURIComponent(s.id)+'">Open in Sprint Capacity →</a></div>'+
+      '<div class="cols">'+colHtml('todo')+colHtml('doing')+colHtml('done')+'</div>';
+    root.appendChild(lane);
   }
 })();
 </script>

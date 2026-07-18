@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   canReadSprint,
   canEditCapacityRow,
-  canConfirmAvailability,
   canEditSettings,
   canOverrideFocusFactor,
   canChangeCalibration,
@@ -36,14 +35,6 @@ describe('canEditCapacityRow', () => {
 
   it('allows a manager to edit any row', () => {
     expect(canEditCapacityRow(manager, { targetUserId: other.userId })).toBe(true);
-  });
-});
-
-describe('canConfirmAvailability', () => {
-  it('follows the same rule as editing a row', () => {
-    expect(canConfirmAvailability).toBe(canEditCapacityRow);
-    expect(canConfirmAvailability(member, { targetUserId: member.userId })).toBe(true);
-    expect(canConfirmAvailability(member, { targetUserId: other.userId })).toBe(false);
   });
 });
 

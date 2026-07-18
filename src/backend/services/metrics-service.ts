@@ -5,7 +5,6 @@
  */
 import {
   aggregateEffort,
-  confirmedCapacityMinutes,
   endOfDayUtcMs,
   isoToUtcMs,
   observedFocusFactor,
@@ -23,7 +22,6 @@ export interface AssigneeEffort {
 
 export interface ComputedMetrics {
   rawCapacityMinutes: number;
-  confirmedCapacityMinutes: number;
   plannedCapacityMinutes: number;
   originalEffortMinutes: number;
   currentEffortMinutes: number;
@@ -68,11 +66,9 @@ export function computeMetrics(
   // Inclusive of the whole finish day, so work resolved on the last Sprint day counts.
   const finishMs = endOfDayUtcMs(finish);
   const raw = capacity ? rawCapacityMinutes(capacity) : 0;
-  const confirmed = capacity ? confirmedCapacityMinutes(capacity) : 0;
   const effort = aggregateEffort(issues.map(toEffortIssue), startMs, finishMs);
   return {
     rawCapacityMinutes: raw,
-    confirmedCapacityMinutes: confirmed,
     plannedCapacityMinutes: plannedCapacityMinutes(raw, focusFactor),
     originalEffortMinutes: effort.originalEffortMinutes,
     currentEffortMinutes: effort.currentEffortMinutes,

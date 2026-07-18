@@ -11,7 +11,6 @@ import type { SprintRepository } from '../repositories/sprint-repository.js';
 
 export interface CapacityPatch {
   availableMinutes?: number;
-  confirmed?: boolean;
   note?: string;
 }
 
@@ -71,7 +70,6 @@ export class CapacityService {
       // Any explicit edit marks the row customised so date changes won't overwrite it.
       updated.availableWasCustomized = patch.availableMinutes !== existing.defaultMinutes;
     }
-    if (patch.confirmed !== undefined) updated.confirmed = patch.confirmed;
     if (patch.note !== undefined) updated.note = patch.note;
 
     const newDoc: CapacityDocument = {

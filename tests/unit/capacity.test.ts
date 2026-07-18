@@ -3,10 +3,8 @@ import {
   defaultCapacityMinutes,
   defaultCapacityForSprint,
   rawCapacityMinutes,
-  confirmedCapacityMinutes,
   plannedCapacityMinutes,
   remainingCapacityMinutes,
-  confirmationCounts,
   reapplyDefaults,
 } from '../../src/domain/capacity/capacity.js';
 import { makeDoc, makeRow } from '../fixtures/capacity.js';
@@ -62,16 +60,6 @@ describe('rawCapacityMinutes', () => {
   });
 });
 
-describe('confirmedCapacityMinutes', () => {
-  it('sums only confirmed rows', () => {
-    const doc = makeDoc([
-      makeRow({ userId: '1-1', availableMinutes: 4800, confirmed: true }),
-      makeRow({ userId: '1-2', availableMinutes: 2400, confirmed: false }),
-    ]);
-    expect(confirmedCapacityMinutes(doc)).toBe(4800);
-  });
-});
-
 describe('plannedCapacityMinutes', () => {
   it('is raw x focusFactor, rounded', () => {
     expect(plannedCapacityMinutes(4800, 0.75)).toBe(3600);
@@ -102,16 +90,6 @@ describe('remainingCapacityMinutes', () => {
     const afterAddingTask = remainingCapacityMinutes(planned, 2400 + 1800);
     expect(afterAddingTask).toBeLessThan(before);
     expect(before - afterAddingTask).toBe(1800);
-  });
-});
-
-describe('confirmationCounts', () => {
-  it('counts confirmed rows against the total', () => {
-    const doc = makeDoc([
-      makeRow({ userId: '1-1', confirmed: true }),
-      makeRow({ userId: '1-2', confirmed: false }),
-    ]);
-    expect(confirmationCounts(doc)).toEqual({ confirmed: 1, total: 2 });
   });
 });
 

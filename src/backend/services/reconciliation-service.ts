@@ -79,7 +79,6 @@ export class ReconciliationService {
 
     await this.repo.saveMetrics(native.id, {
       rawCapacityMinutes: metrics.rawCapacityMinutes,
-      confirmedCapacityMinutes: metrics.confirmedCapacityMinutes,
       plannedCapacityMinutes: metrics.plannedCapacityMinutes,
       originalEffortMinutes: metrics.originalEffortMinutes,
       currentEffortMinutes: metrics.currentEffortMinutes,
@@ -125,7 +124,6 @@ export function isCompleted(finish: string, nowMs: number): boolean {
 function emptyMetrics(): ComputedMetrics {
   return {
     rawCapacityMinutes: 0,
-    confirmedCapacityMinutes: 0,
     plannedCapacityMinutes: 0,
     originalEffortMinutes: 0,
     currentEffortMinutes: 0,

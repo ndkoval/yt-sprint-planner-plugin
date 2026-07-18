@@ -8,7 +8,7 @@ test.describe('Project tab overview', () => {
     await openTab(page, 'manager');
 
     // Header controls (§6.1).
-    for (const label of ['Create next Sprint', 'Open board', 'Recalculate', 'Refresh']) {
+    for (const label of ['Create next Sprint', 'Open board']) {
       await expect(page.getByRole('button', { name: label })).toBeVisible();
     }
 

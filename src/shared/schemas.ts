@@ -30,7 +30,6 @@ export const capacityRowSchema = z
     defaultMinutes: minutes,
     availableMinutes: minutes,
     availableWasCustomized: z.boolean(),
-    confirmed: z.boolean(),
     note: z.string(),
     updatedAt: z.number().int(),
     updatedBy: userIdSchema,

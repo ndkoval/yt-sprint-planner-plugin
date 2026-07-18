@@ -55,7 +55,6 @@ export interface SprintView {
   focusFactorOverride: FocusFactorOverride | null;
 
   rawCapacityMinutes: number;
-  confirmedCapacityMinutes: number;
   plannedCapacityMinutes: number;
 
   originalEffortMinutes: number;
@@ -129,7 +128,6 @@ export interface ConfigValidationResponse {
 export interface PatchCapacityRequest {
   expectedRevision: number;
   availableMinutes?: number;
-  confirmed?: boolean;
   note?: string;
 }
 

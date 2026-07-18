@@ -204,9 +204,8 @@ export function createApp(deps: AppDeps): Router {
     const ctx = await requireContext(req);
     const sprint = await loadSprintRecord(ctx, req.params.sprintId!);
     const record = await ctx.sprintRepo.load(sprint, ctx.projectId);
-    // Recompute the missing-effort warning list + per-assignee load live for display.
-    let missing: string[] = [];
-    let assignment = undefined;
+    // Compute ALL metrics live from the current issue set so every read reflects the
+    // latest state automatically — no manual "Recalculate" needed.
     if (sprint.start && sprint.finish) {
       const issues = await client.getSprintIssues(
         ctx.boardId,
@@ -221,13 +220,16 @@ export function createApp(deps: AppDeps): Router {
         sprint.finish,
         record.focusFactor,
       );
-      missing = metrics.issuesMissingOriginalEffort;
-      assignment = {
-        assignedEffort: metrics.assignedEffort,
-        unassignedEffort: metrics.unassignedEffort,
-      };
+      return ok(
+        toSprintView(
+          record,
+          metrics.issuesMissingOriginalEffort,
+          { assignedEffort: metrics.assignedEffort, unassignedEffort: metrics.unassignedEffort },
+          metrics,
+        ),
+      );
     }
-    return ok(toSprintView(record, missing, assignment));
+    return ok(toSprintView(record, []));
   });
 
   // ---- POST /sprints/create-next ----------------------------------------------
@@ -311,7 +313,6 @@ export function createApp(deps: AppDeps): Router {
         ...(parsed.availableMinutes !== undefined
           ? { availableMinutes: parsed.availableMinutes }
           : {}),
-        ...(parsed.confirmed !== undefined ? { confirmed: parsed.confirmed } : {}),
         ...(parsed.note !== undefined ? { note: parsed.note } : {}),
       },
     );
@@ -324,27 +325,6 @@ export function createApp(deps: AppDeps): Router {
   router.add('PATCH', '/sprints/:sprintId/capacity/:userId', (req) =>
     patchCapacity(req, () => req.params.userId!),
   );
-
-  const confirm = async (req: HttpRequest, confirmed: boolean): Promise<HttpResponse> => {
-    const ctx = await requireContext(req);
-    const parsed = capacityRevisionRequestSchema.parse(req.body);
-    const sprint = await loadSprintRecord(ctx, req.params.sprintId!);
-    const record = await ctx.sprintRepo.load(sprint, ctx.projectId);
-    if (!record.capacity) throw notFound('Capacity document');
-    const service = new CapacityService(ctx.sprintRepo, clock);
-    await service.applyPatch(
-      sprint.id,
-      record.capacity,
-      record.capacityRevision,
-      parsed.expectedRevision,
-      ctx.principal.userId,
-      ctx.principal,
-      { confirmed },
-    );
-    return reconcileAndView(ctx, sprint.id);
-  };
-  router.add('POST', '/sprints/:sprintId/capacity/me/confirm', (req) => confirm(req, true));
-  router.add('POST', '/sprints/:sprintId/capacity/me/unconfirm', (req) => confirm(req, false));
 
   router.add('POST', '/sprints/:sprintId/capacity/:userId/reset', async (req) => {
     const ctx = await requireContext(req);

@@ -106,7 +106,6 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
   const [showOverride, setShowOverride] = useState(false);
   const [overriding, setOverriding] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
-  const [recalculating, setRecalculating] = useState(false);
 
   const hoursPerDay = config?.hoursPerDay ?? 8;
 
@@ -164,6 +163,19 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Auto-refresh: silently re-load the selected Sprint on an interval so metrics stay
+  // live as issues change — no manual Refresh needed.
+  useEffect(() => {
+    if (selectedId === null) return undefined;
+    const id = selectedId;
+    const interval = setInterval(() => {
+      void loadSprint(id, false).catch(() => {
+        /* transient poll error; the next tick retries */
+      });
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [selectedId, loadSprint]);
 
   const selectSprint = useCallback(
     (id: string): void => {
@@ -299,17 +311,6 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
     [sprint, client],
   );
 
-  const recalculate = useCallback((): void => {
-    if (sprint === null) return;
-    const sprintId = sprint.id;
-    setRecalculating(true);
-    void client
-      .recalculate(sprintId)
-      .then((updated) => setSprint(updated))
-      .catch((err: unknown) => setActionError(err))
-      .finally(() => setRecalculating(false));
-  }, [sprint, client]);
-
   const createNextSprint = useCallback(
     (request: CreateNextSprintRequest): void => {
       setCreating(true);
@@ -400,12 +401,6 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
         <Button onClick={openBoard} disabled={config === null}>
           Open board
         </Button>
-        {isManager ? (
-          <Button onClick={recalculate} loader={recalculating} disabled={sprint === null || recalculating}>
-            Recalculate
-          </Button>
-        ) : null}
-        <Button onClick={() => void load()}>Refresh</Button>
       </header>
 
       {conflict !== null ? (
@@ -450,7 +445,6 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
               savingUserIds={savingUserIds}
               onAvailableInput={(userId, days) => updateDraft(userId, { availableDays: days })}
               onNoteInput={(userId, note) => updateDraft(userId, { note })}
-              onConfirmedToggle={(userId, confirmed) => void patchCapacity(userId, { confirmed })}
               onCommit={commitRow}
             />
           </section>

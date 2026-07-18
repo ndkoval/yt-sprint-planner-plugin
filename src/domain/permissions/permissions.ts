@@ -33,9 +33,6 @@ export function canEditCapacityRow(principal: Principal, mutation: CapacityMutat
   return principal.userId === mutation.targetUserId;
 }
 
-/** Confirm/unconfirm follows the same rule as editing a row. */
-export const canConfirmAvailability = canEditCapacityRow;
-
 /** Manager-only actions. */
 export function canEditSettings(principal: Principal): boolean {
   return principal.isManager;

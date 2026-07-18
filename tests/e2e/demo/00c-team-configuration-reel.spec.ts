@@ -8,6 +8,7 @@ import {
   moveTo,
   settle,
   Captioner,
+  showTitleCard,
 } from './helpers.js';
 
 /**
@@ -21,6 +22,7 @@ test.describe('Marketing reel — team configuration', () => {
     const cap = new Captioner(page);
 
     await openSettings(page, 'manager');
+    await showTitleCard(page, 'Configure in a minute', 'Board · effort fields · schedule · team');
     await cap.say('Set up Sprint Capacity Planner for your project — once');
     await expect(page.getByRole('heading', { name: 'Agile board' })).toBeVisible();
     await moveTo(page, page.getByRole('heading', { name: 'Agile board' }));

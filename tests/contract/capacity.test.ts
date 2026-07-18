@@ -112,34 +112,7 @@ describe('PATCH /sprints/:id/capacity/:userId', () => {
   });
 });
 
-describe('confirm / unconfirm / reset', () => {
-  it('confirms then unconfirms the caller row', async () => {
-    const fake = setup();
-    fake.currentUserId = MEMBER.id;
-    const confirmed = (
-      await request(app(fake), 'POST', '/sprints/sprint-1/capacity/me/confirm', {
-        body: { expectedRevision: 1 },
-      })
-    ).body as CapacityResponse;
-    expect(confirmed.capacity.rows[MEMBER.id]!.confirmed).toBe(true);
-
-    const unconfirmed = (
-      await request(app(fake), 'POST', '/sprints/sprint-1/capacity/me/unconfirm', {
-        body: { expectedRevision: confirmed.capacityRevision },
-      })
-    ).body as CapacityResponse;
-    expect(unconfirmed.capacity.rows[MEMBER.id]!.confirmed).toBe(false);
-  });
-
-  it('rejects a stale revision on confirm with 409', async () => {
-    const fake = setup();
-    fake.currentUserId = MEMBER.id;
-    const res = await request(app(fake), 'POST', '/sprints/sprint-1/capacity/me/confirm', {
-      body: { expectedRevision: 99 },
-    });
-    expect(res.status).toBe(409);
-  });
-
+describe('reset', () => {
   it('resets a customised row back to its default', async () => {
     const fake = setup();
     fake.currentUserId = MEMBER.id;

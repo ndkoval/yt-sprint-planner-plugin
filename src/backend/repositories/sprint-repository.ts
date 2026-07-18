@@ -38,7 +38,6 @@ export interface SprintRecord {
   focusFactorOverride: FocusFactorOverride | null;
 
   rawCapacityMinutes: number;
-  confirmedCapacityMinutes: number;
   plannedCapacityMinutes: number;
 
   originalEffortMinutes: number;
@@ -71,7 +70,6 @@ const KEYS = [
   'scpFocusFactorSource',
   'scpFocusFactorOverrideJson',
   'scpRawCapacityMinutes',
-  'scpConfirmedCapacityMinutes',
   'scpPlannedCapacityMinutes',
   'scpOriginalEffortMinutes',
   'scpCurrentEffortMinutes',
@@ -158,7 +156,6 @@ export class SprintRepository {
         focusFactorOverrideSchema.parse(v),
       ),
       rawCapacityMinutes: num(raw.scpRawCapacityMinutes, 0),
-      confirmedCapacityMinutes: num(raw.scpConfirmedCapacityMinutes, 0),
       plannedCapacityMinutes: num(raw.scpPlannedCapacityMinutes, 0),
       originalEffortMinutes: num(raw.scpOriginalEffortMinutes, 0),
       currentEffortMinutes: num(raw.scpCurrentEffortMinutes, 0),
@@ -227,7 +224,6 @@ export class SprintRepository {
     sprintId: string,
     metrics: {
       rawCapacityMinutes: number;
-      confirmedCapacityMinutes: number;
       plannedCapacityMinutes: number;
       originalEffortMinutes: number;
       currentEffortMinutes: number;
@@ -242,7 +238,6 @@ export class SprintRepository {
   ): Promise<void> {
     const values: Record<string, string | number | boolean | null> = {
       scpRawCapacityMinutes: metrics.rawCapacityMinutes,
-      scpConfirmedCapacityMinutes: metrics.confirmedCapacityMinutes,
       scpPlannedCapacityMinutes: metrics.plannedCapacityMinutes,
       scpOriginalEffortMinutes: metrics.originalEffortMinutes,
       scpCurrentEffortMinutes: metrics.currentEffortMinutes,

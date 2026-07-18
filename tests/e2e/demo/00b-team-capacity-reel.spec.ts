@@ -5,29 +5,29 @@ import {
   guardErrors,
   humanClick,
   humanFill,
-  toggleConfirm,
   moveTo,
   settle,
   Captioner,
+  showTitleCard,
 } from './helpers.js';
 
 const API = '/api/apps/sprint-capacity-planner/backend';
 
 /**
  * Marketing reel #2 — "plan capacity with your whole team". A focused, subtitled story:
- * a manager creates the next Sprint, then each teammate sets their own availability and
- * confirms it, and the confirmation count + confirmed capacity fill up live. Ends on the
- * manager's view with everyone confirmed and planned capacity ready. Distinct from reel #1
- * (which is the broad end-to-end walkthrough); this one showcases the collaborative
- * availability workflow.
+ * a manager creates the next Sprint, then each teammate sets their own availability (no
+ * confirmation step — that was removed as redundant), and raw + planned capacity update
+ * live. Ends on the manager's view. Distinct from reel #1 (the broad end-to-end
+ * walkthrough); this one showcases the collaborative availability workflow.
  */
 test.describe('Marketing reel — team capacity', () => {
-  test('the whole team confirms availability for the next Sprint', async ({ page }, info) => {
+  test('the whole team sets availability for the next Sprint', async ({ page }, info) => {
     const assertClean = guardErrors(page);
     const cap = new Captioner(page);
 
     // Manager creates the next Sprint.
     await openTab(page, 'manager', 'sprint-2');
+    await showTitleCard(page, 'Plan capacity with your team', 'Everyone sets their own availability');
     await cap.say('Plan a Sprint with your whole team');
     await humanClick(page, page.getByRole('button', { name: 'Create next Sprint' }));
     await expect(page.getByText('AppGlass 2026-S3')).toBeVisible();
@@ -42,43 +42,34 @@ test.describe('Marketing reel — team capacity', () => {
     }, API);
     expect(sprintId).not.toBe('');
 
-    await openTab(page, 'manager', sprintId);
-    await cap.say('A fresh Sprint starts with nobody confirmed — 0 of 3');
-    await moveTo(page, page.getByText('Participants confirmed', { exact: true }));
-    await expect(page.getByText('0/3')).toBeVisible();
-    await settle(page, 1000);
-
-    // Alice sets availability + a note, then confirms.
+    // Alice sets availability + a note.
     await openTab(page, 'alice', sprintId);
     await cap.say('Alice adjusts her availability and adds a note');
     await humanFill(page, page.getByLabel('Available capacity in days for Alice Smith'), '7');
     await page.getByLabel('Available capacity in days for Alice Smith').blur();
     await humanFill(page, page.getByLabel('Note for Alice Smith'), 'Conference Mon-Tue');
     await page.getByLabel('Note for Alice Smith').blur();
-    await cap.say('…then confirms — she can only edit her own row');
-    await toggleConfirm(page, 'Alice Smith');
-    await expect(page.getByText('1/3')).toBeVisible({ timeout: 15_000 });
+    await cap.say('She can only edit her own row');
+    await expect(page.getByLabel('Available capacity in days for Alice Smith')).toHaveValue('7', {
+      timeout: 15_000,
+    });
     await settle(page, 900);
 
-    // Bob confirms.
+    // Bob sets his availability too.
     await openTab(page, 'bob', sprintId);
-    await cap.say('Bob confirms his availability');
-    await toggleConfirm(page, 'Bob Jones');
-    await expect(page.getByText('2/3')).toBeVisible({ timeout: 15_000 });
-    await settle(page, 800);
+    await cap.say('Bob sets his availability');
+    await humanFill(page, page.getByLabel('Available capacity in days for Bob Jones'), '9');
+    await page.getByLabel('Available capacity in days for Bob Jones').blur();
+    await expect(page.getByLabel('Available capacity in days for Bob Jones')).toHaveValue('9', {
+      timeout: 15_000,
+    });
+    await settle(page, 900);
 
-    // Charlie confirms.
-    await openTab(page, 'charlie', sprintId);
-    await cap.say('Charlie confirms too');
-    await toggleConfirm(page, 'Charlie Diaz');
-    await expect(page.getByText('3/3')).toBeVisible({ timeout: 15_000 });
-    await settle(page, 800);
-
-    // Manager sees everyone confirmed + planned capacity.
+    // Manager sees the team's capacity roll up.
     await openTab(page, 'manager', sprintId);
-    await cap.say('Everyone confirmed — planned capacity is ready');
+    await cap.say('Raw and planned capacity reflect the whole team — automatically');
     await moveTo(page, page.getByText('Planned capacity', { exact: true }));
-    await expect(page.getByText('3/3')).toBeVisible();
+    await expect(page.getByText('Alice Smith')).toBeVisible();
     await cap.say('Sprint Capacity Planner — the team plans together');
     await settle(page, 1600);
     await info.attach('team-capacity.png', {

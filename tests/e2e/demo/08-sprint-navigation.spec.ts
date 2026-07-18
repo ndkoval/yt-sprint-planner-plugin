@@ -29,15 +29,18 @@ test.describe('Sprint navigation & issues', () => {
     ]);
     await board.waitForLoadState('networkidle');
     await expect(board.getByRole('heading', { name: 'AppGlass Board' })).toBeVisible();
-    await expect(board.getByRole('cell', { name: 'AG-10', exact: true })).toBeVisible();
-    await expect(board.getByRole('cell', { name: 'AG-11', exact: true })).toBeVisible();
+    // Kanban columns + issue cards (sprints enabled as swimlanes).
+    await expect(board.getByRole('heading', { name: 'To Do' }).first()).toBeVisible();
+    await expect(board.getByRole('heading', { name: 'In Progress' }).first()).toBeVisible();
+    await expect(board.getByRole('heading', { name: 'Done' }).first()).toBeVisible();
+    await expect(board.getByText('AG-10', { exact: true })).toBeVisible();
     await info.attach('board.png', {
       body: await board.screenshot({ fullPage: true }),
       contentType: 'image/png',
     });
 
-    // Jump into a Sprint from the board — lands in the planner for that Sprint.
-    await board.getByRole('link', { name: /2026-S2.*Sprint Capacity/ }).click();
+    // Jump into a Sprint from the board — the S2 swimlane link lands in its planner.
+    await board.locator('[data-sprint="sprint-2"]').getByRole('link').click();
     await board.waitForLoadState('networkidle');
     await expect(board.getByText('Deliver a usable first customer deployment')).toBeVisible();
 

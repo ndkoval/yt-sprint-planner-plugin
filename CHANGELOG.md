@@ -4,6 +4,18 @@ All notable changes to the Sprint Capacity Planner are documented here. The form
 
 ## [Unreleased]
 
+### Changed (simplification)
+
+- **Removed capacity confirmation entirely** — it was a redundant extra step. Gone from the model (`CapacityRow.confirmed`), the API (confirm/unconfirm endpoints, `confirmedCapacityMinutes`), the capacity table (Confirmed column) and summary (Participants-confirmed / Confirmed-capacity). The availability reminder workflow now nudges people who haven't *set* their availability instead.
+- **No manual Refresh** — the project tab auto-refreshes (polls) so metrics stay live as issues change; the Refresh button is gone.
+- **No manual Recalculate** — `GET /sprints/:id` now computes all metrics live from the current issue set, so reads are always current; the Recalculate button is gone (reconciliation still runs on mutations + on schedule to keep the cache warm).
+
+### Added (demos)
+
+- **Kanban board** — the board view is now a Kanban with **sprints enabled** (one swimlane per Sprint, To Do / In Progress / Done columns, issue cards); the sprint-navigation demo asserts it.
+- **Title cards** — each marketing reel opens with a branded title card so the video introduces itself.
+- **Voiceover** — `scripts/render-reels.mjs` synthesizes timed narration from each reel's WebVTT (macOS `say`) and muxes it onto the video as an H.264 `.mp4` under `artifacts/demo/reels/` (baked captions + narration). Degrades gracefully where TTS/ffmpeg are absent.
+
 ### Added (per-assignee planning)
 
 - **Assign tasks to people while planning, with an Unassigned bucket.** Effort now rolls up per assignee (the issue's Assignee) as well as in total. The capacity table shows each person's **Assigned** load (with an over-capacity ⚠ when it exceeds their available days), and the effort summary shows the **Unassigned** remainder — so you can balance the team while leaving work owned by project direction rather than forced onto a person. Assigned load updates automatically as issues change. New `assigneeId` on issues; `aggregateEffort` returns `byAssignee` + `unassigned`; `SprintView` gains `assignedEffort` + `unassignedEffort`. Covered by unit + contract tests and the `09-assignment` demo.

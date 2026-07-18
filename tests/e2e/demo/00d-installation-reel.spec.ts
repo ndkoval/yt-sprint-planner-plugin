@@ -1,4 +1,13 @@
-import { test, expect, guardErrors, humanClick, moveTo, settle, Captioner } from './helpers.js';
+import {
+  test,
+  expect,
+  guardErrors,
+  humanClick,
+  moveTo,
+  settle,
+  Captioner,
+  showTitleCard,
+} from './helpers.js';
 
 /**
  * Marketing reel #4 — installation. A subtitled, cursored walk through installing the
@@ -12,6 +21,7 @@ test.describe('Marketing reel — installation', () => {
     const cap = new Captioner(page);
 
     await page.goto('/install', { waitUntil: 'networkidle' });
+    await showTitleCard(page, 'Install in one click', 'A single ZIP — no external services');
     await cap.say('Install Sprint Capacity Planner from a single ZIP');
     await expect(page.getByRole('heading', { name: 'Install app' })).toBeVisible();
     await moveTo(page, page.getByText('sprint-capacity-planner.zip').first());

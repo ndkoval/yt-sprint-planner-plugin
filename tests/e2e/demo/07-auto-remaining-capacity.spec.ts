@@ -53,10 +53,9 @@ test.describe('Remaining capacity updates automatically when a task is added', (
     expect(after.current).toBe(before.current + 1800);
     expect(after.remaining).toBe(before.remaining - 1800);
 
-    // The UI reflects it after a refresh.
-    await page.getByRole('button', { name: 'Refresh' }).click();
+    // The UI reflects it automatically (auto-refresh polling) — no button to click.
     await expect
-      .poll(async () => (await remainingCell.textContent())?.trim())
+      .poll(async () => (await remainingCell.textContent())?.trim(), { timeout: 15_000 })
       .not.toBe(remainingTextBefore);
 
     await info.attach('remaining-after-add.png', {

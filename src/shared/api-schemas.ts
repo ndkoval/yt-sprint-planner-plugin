@@ -19,15 +19,12 @@ export const patchCapacityRequestSchema = z
   .object({
     expectedRevision: z.number().int().min(0),
     availableMinutes: minutes.optional(),
-    confirmed: z.boolean().optional(),
     note: z.string().max(2000).optional(),
   })
   .strict()
-  .refine(
-    (b) =>
-      b.availableMinutes !== undefined || b.confirmed !== undefined || b.note !== undefined,
-    { message: 'at least one of availableMinutes, confirmed, note is required' },
-  );
+  .refine((b) => b.availableMinutes !== undefined || b.note !== undefined, {
+    message: 'at least one of availableMinutes, note is required',
+  });
 
 /** Body for capacity actions that carry only an optimistic-concurrency revision. */
 export const capacityRevisionRequestSchema = z

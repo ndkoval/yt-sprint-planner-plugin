@@ -3,8 +3,8 @@
  *
  * TRIGGER: Cron (daily by default). For each upcoming managed Sprint whose start is
  * within the reminder lead window (app setting `reminderLeadDays`, default 3 days),
- * notify every participant whose capacity row has confirmed === false, asking them to
- * confirm their availability.
+ * notify every participant who has not set their availability yet (still the default),
+ * asking them to review it.
  *
  * WHY on an ISSUE schedule: onSchedule iterates ISSUES, so we reach Sprints through
  * their member issues and de-duplicate Sprints per run.
@@ -13,7 +13,7 @@
  *   1. For each managed Sprint the issue belongs to that has NOT been processed this
  *      run and starts within [now, now + leadDays]:
  *        a. Parse its capacity document (scpCapacityJson).
- *        b. For each row with confirmed === false, notify the user UNLESS they were
+ *        b. For each row with availableWasCustomized === false, notify the user UNLESS they were
  *           already reminded within the last 24h (per-row `scpLastReminderAt`, an
  *           unknown field preserved inside the capacity document).
  *        c. Stamp scpLastReminderAt on reminded rows and persist the capacity doc.
@@ -63,18 +63,19 @@ function remindForSprint(sprint, nowMs) {
   var userIds = Object.keys(doc.rows);
   for (var i = 0; i < userIds.length; i++) {
     var row = doc.rows[userIds[i]];
-    if (!row || row.confirmed === true) continue;
+    // Nudge only people who have not set their availability yet (still the default).
+    if (!row || row.availableWasCustomized === true) continue;
 
     // Rate limit: skip if reminded within the last 24h.
     var last = Number(row.scpLastReminderAt);
     if (isFinite(last) && last > 0 && nowMs - last < MS_PER_DAY) continue;
 
     var user = common.findUserById(row.userId || userIds[i]);
-    var subject = 'Please confirm your availability for ' + sprintName;
+    var subject = 'Set your availability for ' + sprintName;
     var body =
-      'Your capacity for "' +
+      'You have not set your availability for "' +
       sprintName +
-      '" is not yet confirmed. Please review and confirm your availability. ' +
+      '" yet — it is still the default. Please review and adjust it if needed. ' +
       'This is an informational reminder.';
 
     var sent = common.notifyUser(user, subject, body);

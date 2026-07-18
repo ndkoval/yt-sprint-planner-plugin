@@ -49,8 +49,6 @@ export interface CapacityRow {
   availableMinutes: number;
   /** True once available diverges from default (blocks auto-reset on date change). */
   availableWasCustomized: boolean;
-  /** Informational confirmation flag. Never blocks anything. */
-  confirmed: boolean;
   /** Free-text note (e.g. "Vacation"). */
   note: string;
   /** UTC ms of last edit to this row. */

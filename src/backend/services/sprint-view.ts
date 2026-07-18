@@ -5,6 +5,7 @@
 import type { AssigneeEffortView, SprintView } from '../../shared/api.js';
 import type { CapacityDocument } from '../../shared/types.js';
 import type { SprintRecord } from '../repositories/sprint-repository.js';
+import type { ComputedMetrics } from './metrics-service.js';
 
 const EMPTY_CAPACITY: CapacityDocument = { version: 1, createdFromConfigVersion: 0, rows: {} };
 const ZERO_EFFORT: AssigneeEffortView = { originalEffortMinutes: 0, currentEffortMinutes: 0 };
@@ -15,11 +16,18 @@ export interface AssignmentBreakdown {
   unassignedEffort: AssigneeEffortView;
 }
 
+/**
+ * Build the client view. When `live` metrics are supplied (computed from the current
+ * issue set), the capacity/effort figures come from them so reads always reflect the
+ * latest state without a manual recalculation; otherwise the cached record values are used.
+ */
 export function toSprintView(
   record: SprintRecord,
   issuesMissingOriginalEffort: string[],
   assignment: AssignmentBreakdown = { assignedEffort: {}, unassignedEffort: ZERO_EFFORT },
+  live?: ComputedMetrics,
 ): SprintView {
+  const m = live ?? record;
   return {
     id: record.native.id,
     name: record.native.name,
@@ -34,13 +42,12 @@ export function toSprintView(
     focusFactor: record.focusFactor,
     focusFactorSource: record.focusFactorSource,
     focusFactorOverride: record.focusFactorOverride,
-    rawCapacityMinutes: record.rawCapacityMinutes,
-    confirmedCapacityMinutes: record.confirmedCapacityMinutes,
-    plannedCapacityMinutes: record.plannedCapacityMinutes,
-    originalEffortMinutes: record.originalEffortMinutes,
-    currentEffortMinutes: record.currentEffortMinutes,
-    completedOriginalEffortMinutes: record.completedOriginalEffortMinutes,
-    observedFocusFactor: record.observedFocusFactor,
+    rawCapacityMinutes: m.rawCapacityMinutes,
+    plannedCapacityMinutes: m.plannedCapacityMinutes,
+    originalEffortMinutes: m.originalEffortMinutes,
+    currentEffortMinutes: m.currentEffortMinutes,
+    completedOriginalEffortMinutes: m.completedOriginalEffortMinutes,
+    observedFocusFactor: m.observedFocusFactor,
     excludedFromCalibration: record.excludedFromCalibration,
     calibrationSkipReason: record.calibrationSkipReason,
     metricsRevision: record.metricsRevision,

@@ -127,16 +127,18 @@ describe('reconciliation corrects a corrupted cache', () => {
       },
     });
 
+    // GET now computes metrics live, so a corrupted CACHE is never shown to the client
+    // (auto-recalculate on read); the persisted cache is still wrong at this point.
     const before = (await request(app(fake), 'GET', '/sprints/sprint-1')).body as SprintView;
-    expect(before.originalEffortMinutes).toBe(99999);
-    expect(before.dataIntegrityStatus).toBe('needs-recalculation');
+    expect(before.originalEffortMinutes).toBe(13000);
+    expect(fake.peekExtension('Sprint', 'sprint-1', 'scpOriginalEffortMinutes')).toBe(99999);
 
     await request(app(fake), 'POST', '/sprints/sprint-1/recalculate');
 
     const after = (await request(app(fake), 'GET', '/sprints/sprint-1')).body as SprintView;
     expect(after.originalEffortMinutes).toBe(13000);
     expect(after.dataIntegrityStatus).toBe('up-to-date');
-    // The persisted cache itself was corrected.
+    // Recalculate also corrected the persisted cache.
     expect(fake.peekExtension('Sprint', 'sprint-1', 'scpOriginalEffortMinutes')).toBe(13000);
     expect(fake.peekExtension('Sprint', 'sprint-1', 'scpDataIntegrityStatus')).toBe('up-to-date');
   });

@@ -1,6 +1,5 @@
 import React from 'react';
 import Input, { Size as InputSize } from '@jetbrains/ring-ui-built/components/input/input';
-import Checkbox from '@jetbrains/ring-ui-built/components/checkbox/checkbox';
 import type { AssigneeEffortView } from '../../shared/api';
 import type { CapacityRow } from '../../shared/types';
 import { formatDaysValue } from '../../shared/units';
@@ -24,7 +23,6 @@ export interface CapacityTableProps {
   savingUserIds: ReadonlySet<string>;
   onAvailableInput(userId: string, days: string): void;
   onNoteInput(userId: string, note: string): void;
-  onConfirmedToggle(userId: string, confirmed: boolean): void;
   /** Commit the current draft (available + note) for a row, e.g. on blur or Enter. */
   onCommit(userId: string): void;
 }
@@ -46,7 +44,7 @@ const headStyle: React.CSSProperties = {
 
 /**
  * §6.3 capacity table. Everyone is allocated at 100%, so there is no allocation column.
- * A participant may edit ONLY their own Available/Confirmed/Note; managers may edit every
+ * A participant may edit ONLY their own Available/Note; managers may edit every
  * row. Values are minutes in the model and rendered as plain day numbers (floats).
  */
 export function CapacityTable({
@@ -59,7 +57,6 @@ export function CapacityTable({
   savingUserIds,
   onAvailableInput,
   onNoteInput,
-  onConfirmedToggle,
   onCommit,
 }: CapacityTableProps): React.JSX.Element {
   const canEdit = (row: CapacityRow): boolean => isManager || row.userId === currentUserId;
@@ -84,9 +81,6 @@ export function CapacityTable({
             Assigned
           </th>
           <th style={headStyle} scope="col">
-            Confirmed
-          </th>
-          <th style={headStyle} scope="col">
             Note
           </th>
           <th style={headStyle} scope="col">
@@ -103,7 +97,6 @@ export function CapacityTable({
           const noteValue = draft?.note ?? row.note;
           const availableId = `available-${row.userId}`;
           const noteId = `note-${row.userId}`;
-          const confirmedId = `confirmed-${row.userId}`;
           return (
             <tr key={row.userId}>
               <td style={cellStyle}>{row.displayNameSnapshot || row.loginSnapshot}</td>
@@ -147,17 +140,6 @@ export function CapacityTable({
                     </span>
                   );
                 })()}
-              </td>
-              <td style={cellStyle}>
-                <Checkbox
-                  id={confirmedId}
-                  aria-label={`Confirmed by ${row.displayNameSnapshot}`}
-                  checked={row.confirmed}
-                  disabled={!editable || saving}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                    onConfirmedToggle(row.userId, e.target.checked)
-                  }
-                />
               </td>
               <td style={cellStyle}>
                 {editable ? (

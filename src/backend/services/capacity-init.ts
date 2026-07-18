@@ -27,7 +27,6 @@ export function seedCapacityDocument(
       defaultMinutes,
       availableMinutes: defaultMinutes,
       availableWasCustomized: false,
-      confirmed: false,
       note: participant.note ?? '',
       updatedAt: now,
       updatedBy: participant.userId,
