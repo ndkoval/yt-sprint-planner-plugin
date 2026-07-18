@@ -141,8 +141,15 @@ export function createApp(deps: AppDeps): Router {
     const projectId = projectIdOf(req);
     const configRepo = new ConfigRepository(client, projectId);
     const principal = await resolvePrincipal(client, configRepo);
-    if (!canEditSettings(principal)) throw forbidden('Only managers can change settings.');
     const parsed = putConfigRequestSchema.parse(req.body);
+    const existing = await configRepo.load();
+    // First-run bootstrap: manager status is derived from the config, so before any config
+    // exists no one would be a manager and the app could never be set up. Allow a board
+    // administrator to establish the INITIAL config; after that, only managers may change it.
+    const allowed = existing.configured
+      ? canEditSettings(principal)
+      : await client.canManageBoard(parsed.config.boardId);
+    if (!allowed) throw forbidden('Only managers can change settings.');
     const configService = new ConfigService(client, configRepo, projectId);
     const result = await configService.save(parsed.config, parsed.expectedRevision);
     // Return the full ConfigResponse (the shape the widget consumes), not just the revision.

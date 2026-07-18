@@ -88,9 +88,30 @@ async function handleApi(ctx: YtContext): Promise<void> {
   // needs no token. See youtrack-http-client.ts.
   const store = ctx.globalStorage?.extensionProperties ?? {};
   if (envelope.path === '/__configure') {
+    // Store the backend's app token/base URL. Guarded because it would otherwise let any
+    // authenticated user overwrite the token or repoint the base URL (token exfiltration):
+    //   - only an administrator may RECONFIGURE once a token exists;
+    //   - a first-run bootstrap (no token yet) is allowed so provisioning can set it;
+    //   - the base URL must be a well-formed http(s) URL.
+    // SECURITY/SPIKE: this token bridge is a stopgap; the proper design is the Backend JS
+    // (entities) API, which needs no stored token at all.
+    const alreadySet = typeof store.scpYoutrackToken === 'string' && store.scpYoutrackToken.length > 0;
+    const isAdmin = ctx.currentUser?.isSystem === true;
+    if (alreadySet && !isAdmin) {
+      ctx.response.code = 200;
+      ctx.response.json({ status: 403, body: { code: 'FORBIDDEN', message: 'Only an administrator can reconfigure the app connection.' } });
+      return;
+    }
     const cfg = (envelope.body ?? {}) as { token?: unknown; baseUrl?: unknown };
+    if (typeof cfg.baseUrl === 'string') {
+      if (!/^https?:\/\/[^\s/]+(?::\d+)?$/.test(cfg.baseUrl)) {
+        ctx.response.code = 200;
+        ctx.response.json({ status: 400, body: { code: 'VALIDATION_FAILED', message: 'baseUrl must be a http(s) origin.' } });
+        return;
+      }
+      store.scpYoutrackBaseUrl = cfg.baseUrl;
+    }
     if (typeof cfg.token === 'string') store.scpYoutrackToken = cfg.token;
-    if (typeof cfg.baseUrl === 'string') store.scpYoutrackBaseUrl = cfg.baseUrl;
     ctx.response.code = 200;
     ctx.response.json({ status: 200, body: { configured: true } });
     return;

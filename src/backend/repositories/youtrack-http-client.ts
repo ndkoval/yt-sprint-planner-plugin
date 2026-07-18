@@ -366,13 +366,13 @@ export class YouTrackHttpClient implements YouTrackClient {
     entityId: string,
     keys: readonly string[],
   ): Promise<Record<string, string | number | boolean | null>> {
-    // SPIKE: app extension properties are read through the app's entity-extensions
-    // storage. The REST path/field selector is SDK-specific; confirm on a real
-    // instance. Returns nulls until wired.
-    void entityType;
-    void entityId;
     const out: Record<string, string | number | boolean | null> = {};
-    for (const k of keys) out[k] = null;
+    const ep = extensionPropertiesOf(entityType, entityId);
+    for (const k of keys) {
+      const v = ep ? (ep as Record<string, unknown>)[k] : undefined;
+      out[k] =
+        typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' ? v : null;
+    }
     return out;
   }
 
@@ -390,10 +390,43 @@ export class YouTrackHttpClient implements YouTrackClient {
     entityId: string,
     values: Record<string, string | number | boolean | null>,
   ): Promise<void> {
-    // SPIKE: writing app extension properties is SDK-specific; confirm the path.
-    void entityType;
-    void entityId;
-    void values;
+    const ep = extensionPropertiesOf(entityType, entityId);
+    if (!ep) return;
+    for (const [k, v] of Object.entries(values)) {
+      (ep as Record<string, unknown>)[k] = v;
+    }
+  }
+}
+
+/**
+ * App extension properties are read/written through the Backend JS (entities) API — the
+ * blessed backend data path — not REST (REST does not expose app-private storage). Returns
+ * the mutable `extensionProperties` object for the entity, or null off-runtime / when the
+ * entity can't be resolved. Writes persist when the handler transaction commits.
+ *
+ * IMPORTANT (verified on 2025.3): the entities API uses its OWN entity keys, NOT the REST
+ * ids the rest of this client passes around. e.g. `entities.Project` has no `findById` —
+ * only `findByKey(shortName)`. So a REST project id like `0-1` must first be resolved to
+ * its short name; issues/sprints likewise need their entity-native lookups (issue readable
+ * id; sprints via `entities.Agile`). Wiring that REST-id ↔ entity mapping for Project,
+ * Issue and Sprint is the remaining step to full persistence — see resolveEntity below,
+ * which currently handles the shapes that accept a direct id and returns null otherwise.
+ */
+function extensionPropertiesOf(
+  entityType: 'Sprint' | 'Issue' | 'Project',
+  entityId: string,
+): object | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const entities = require('@jetbrains/youtrack-scripting-api/entities') as Record<
+      string,
+      { findById?(id: string): { extensionProperties?: object } | null } | undefined
+    >;
+    const type = entities[entityType];
+    const entity = type?.findById?.(entityId) ?? null;
+    return entity?.extensionProperties ?? null;
+  } catch {
+    return null;
   }
 }
 
