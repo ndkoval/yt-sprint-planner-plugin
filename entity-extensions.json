@@ -65,7 +65,8 @@
       "entityType": "AppGlobalStorage",
       "properties": {
         "scpYoutrackToken": { "type": "string" },
-        "scpYoutrackBaseUrl": { "type": "string" }
+        "scpYoutrackBaseUrl": { "type": "string" },
+        "scpStateJson": { "type": "string" }
       }
     }
   ]

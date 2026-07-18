@@ -19,6 +19,8 @@ import type { HttpMethod, HttpRequest } from './http/router.js';
 import {
   YouTrackHttpClient,
   configureRuntimeConnection,
+  setRuntimeStore,
+  getRuntimeStore,
 } from './repositories/youtrack-http-client.js';
 
 /** The `ctx.request` YouTrack passes to an endpoint's `handle(ctx)`. */
@@ -124,6 +126,19 @@ async function handleApi(ctx: YtContext): Promise<void> {
     (typeof store.scpYoutrackBaseUrl === 'string' ? store.scpYoutrackBaseUrl : null) ??
     (typeof settings.youtrackBaseUrl === 'string' ? settings.youtrackBaseUrl : null);
   configureRuntimeConnection(baseUrl, token);
+
+  // Load the app's extension-property state (one JSON blob in AppGlobalStorage) into the
+  // client before dispatch, then write it back after so mutations persist.
+  let state: Record<string, Record<string, string | number | boolean | null>> = {};
+  if (typeof store.scpStateJson === 'string' && store.scpStateJson.length > 0) {
+    try {
+      state = JSON.parse(store.scpStateJson);
+    } catch {
+      state = {};
+    }
+  }
+  setRuntimeStore(state);
+
   const rawPath = typeof envelope.path === 'string' && envelope.path.length > 0 ? envelope.path : '/';
   const qIndex = rawPath.indexOf('?');
   const pathOnly = qIndex >= 0 ? rawPath.slice(0, qIndex) : rawPath;
@@ -135,6 +150,8 @@ async function handleApi(ctx: YtContext): Promise<void> {
     body: envelope.body,
   };
   const result = await app.handle(request);
+  // Persist any extension-property writes back to AppGlobalStorage.
+  store.scpStateJson = JSON.stringify(getRuntimeStore());
   // Transport is always 200; the real status travels in the envelope.
   ctx.response.code = 200;
   ctx.response.json({ status: result.status, body: result.body });

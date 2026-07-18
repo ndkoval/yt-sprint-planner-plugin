@@ -42,6 +42,28 @@ export function configureRuntimeConnection(baseUrl: string | null, token: string
   runtimeToken = token;
 }
 
+/**
+ * App-owned extension-property storage. YouTrack's entities API (the only backend path to
+ * per-entity extension properties) is keyed by entity-native ids, not the REST ids this
+ * client uses everywhere, so instead the whole app state is kept as one JSON map in the
+ * app's AppGlobalStorage (`scpStateJson`), keyed by `"<EntityType>:<restId>"`. The HTTP
+ * handler loads it into this holder before dispatch and writes it back after (see
+ * backend/index.ts), so writes persist. NOTE: single-blob read-modify-write is fine for
+ * per-project use but is not concurrency-safe across simultaneous writers — a future move
+ * to true per-entity extension properties (entity id-mapping) would remove that caveat.
+ */
+type EntityProps = Record<string, string | number | boolean | null>;
+let runtimeStore: Record<string, EntityProps> = {};
+export function setRuntimeStore(store: Record<string, EntityProps> | null): void {
+  runtimeStore = store ?? {};
+}
+export function getRuntimeStore(): Record<string, EntityProps> {
+  return runtimeStore;
+}
+function storeKey(entityType: string, entityId: string): string {
+  return `${entityType}:${entityId}`;
+}
+
 /** yyyy-mm-dd for a UTC-midnight epoch ms (YouTrack sprint dates are day-precision). */
 function msToIso(ms: number | null | undefined): string | null {
   if (typeof ms !== 'number') return null;
@@ -367,9 +389,9 @@ export class YouTrackHttpClient implements YouTrackClient {
     keys: readonly string[],
   ): Promise<Record<string, string | number | boolean | null>> {
     const out: Record<string, string | number | boolean | null> = {};
-    const ep = extensionPropertiesOf(entityType, entityId);
+    const ep = runtimeStore[storeKey(entityType, entityId)] ?? {};
     for (const k of keys) {
-      const v = ep ? (ep as Record<string, unknown>)[k] : undefined;
+      const v = ep[k];
       out[k] =
         typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' ? v : null;
     }
@@ -390,43 +412,9 @@ export class YouTrackHttpClient implements YouTrackClient {
     entityId: string,
     values: Record<string, string | number | boolean | null>,
   ): Promise<void> {
-    const ep = extensionPropertiesOf(entityType, entityId);
-    if (!ep) return;
-    for (const [k, v] of Object.entries(values)) {
-      (ep as Record<string, unknown>)[k] = v;
-    }
-  }
-}
-
-/**
- * App extension properties are read/written through the Backend JS (entities) API — the
- * blessed backend data path — not REST (REST does not expose app-private storage). Returns
- * the mutable `extensionProperties` object for the entity, or null off-runtime / when the
- * entity can't be resolved. Writes persist when the handler transaction commits.
- *
- * IMPORTANT (verified on 2025.3): the entities API uses its OWN entity keys, NOT the REST
- * ids the rest of this client passes around. e.g. `entities.Project` has no `findById` —
- * only `findByKey(shortName)`. So a REST project id like `0-1` must first be resolved to
- * its short name; issues/sprints likewise need their entity-native lookups (issue readable
- * id; sprints via `entities.Agile`). Wiring that REST-id ↔ entity mapping for Project,
- * Issue and Sprint is the remaining step to full persistence — see resolveEntity below,
- * which currently handles the shapes that accept a direct id and returns null otherwise.
- */
-function extensionPropertiesOf(
-  entityType: 'Sprint' | 'Issue' | 'Project',
-  entityId: string,
-): object | null {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const entities = require('@jetbrains/youtrack-scripting-api/entities') as Record<
-      string,
-      { findById?(id: string): { extensionProperties?: object } | null } | undefined
-    >;
-    const type = entities[entityType];
-    const entity = type?.findById?.(entityId) ?? null;
-    return entity?.extensionProperties ?? null;
-  } catch {
-    return null;
+    const key = storeKey(entityType, entityId);
+    const ep = (runtimeStore[key] ??= {});
+    for (const [k, v] of Object.entries(values)) ep[k] = v;
   }
 }
 
