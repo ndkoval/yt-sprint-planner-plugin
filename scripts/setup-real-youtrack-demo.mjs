@@ -185,6 +185,7 @@ async function runMain() {
     minFocusFactor: 0.55,
     maxFocusFactor: 0.9,
     participants: [{ userId: me.id, enabled: true }],
+    managersGroup: 'AppGlass Team',
   };
   const put = await app('PUT', `/config?projectId=${projectId}`, { expectedRevision: 0, config });
   log('PUT /config', put.status, JSON.stringify(put.body).slice(0, 160));

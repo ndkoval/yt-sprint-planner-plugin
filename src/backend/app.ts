@@ -160,6 +160,10 @@ export function createApp(deps: AppDeps): Router {
     if (!allowed) throw forbidden('Only managers can change settings.');
     const configService = new ConfigService(client, configRepo, projectId);
     const result = await configService.save(parsed.config, parsed.expectedRevision);
+    // Persist the Capacity Managers group (drives isManager) alongside the config.
+    if (parsed.config.managersGroup) {
+      await configRepo.saveManagersGroup(parsed.config.managersGroup);
+    }
     // Return the full ConfigResponse (the shape the widget consumes), not just the revision.
     const body: ConfigResponse = {
       configured: true,

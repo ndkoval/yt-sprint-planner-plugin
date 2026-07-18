@@ -5,10 +5,33 @@
  */
 import { chromium } from '@playwright/test';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 const B = process.env.YT_TEST_BASE_URL ?? 'http://localhost:8080';
 const USER = process.env.YT_TEST_MANAGER_LOGIN ?? 'admin';
 const PASS = process.env.YT_TEST_MANAGER_PASSWORD ?? 'adminPass123!';
 const ZIP = path.resolve(process.env.APP_ZIP ?? 'dist/sprint-capacity-planner.zip');
+const CLEAN = process.env.APP_CLEAN_INSTALL !== 'false';
+const TOKEN =
+  process.env.YT_TEST_ADMIN_TOKEN ??
+  (() => {
+    try { return readFileSync('/tmp/yt25-token.txt', 'utf8').trim(); } catch { return ''; }
+  })();
+
+/** Delete any existing install so AppGlobalStorage (token + state) starts clean. */
+async function deleteExisting() {
+  if (!CLEAN || !TOKEN) return;
+  const h = { Authorization: `Bearer ${TOKEN}`, Accept: 'application/json' };
+  try {
+    const res = await fetch(`${B}/api/admin/apps?fields=id,name&$top=300`, { headers: h });
+    const apps = await res.json();
+    for (const a of Array.isArray(apps) ? apps : []) {
+      if (a.name === 'sprint-capacity-planner') {
+        await fetch(`${B}/api/admin/apps/${a.id}`, { method: 'DELETE', headers: h });
+      }
+    }
+  } catch { /* ignore */ }
+}
+await deleteExisting();
 const br = await chromium.launch();
 const p = await (await br.newContext({ viewport: { width: 1400, height: 900 } })).newPage();
 let err = '';

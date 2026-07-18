@@ -219,11 +219,15 @@ export class YouTrackHttpClient implements YouTrackClient {
   }
 
   async isUserInGroup(userId: string, groupName: string): Promise<boolean> {
-    // SPIKE: verify the correct endpoint for group membership on the target version.
-    const groups = await this.conn.get(`/api/users/${encodeURIComponent(userId)}/groups`, {
-      fields: 'name',
+    // Verified on 2025.3: /api/groups exposes name + members; per-user /groups 404s.
+    const groups = await this.conn.get('/api/groups', {
+      fields: 'name,users(id)',
+      $top: '500',
     });
-    return Array.isArray(groups) && groups.some((g) => pick(g, 'name') === groupName);
+    if (!Array.isArray(groups)) return false;
+    const group = groups.find((g) => pick(g, 'name') === groupName);
+    const users = group ? pick(group, 'users') : null;
+    return Array.isArray(users) && users.some((u) => pick(u, 'id') === userId);
   }
 
   async listBoards(): Promise<YtBoard[]> {

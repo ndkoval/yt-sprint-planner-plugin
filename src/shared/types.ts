@@ -129,6 +129,12 @@ export interface ProjectConfig {
   minFocusFactor: number;
   maxFocusFactor: number;
   participants: Participant[];
+  /**
+   * Name of the YouTrack group whose members are Capacity Managers (may plan Sprints and
+   * edit settings). Optional; when unset, only the first-run bootstrap (a board admin) can
+   * change settings. Persisted as the `scpCapacityManagers` project extension property.
+   */
+  managersGroup?: string | undefined;
 }
 
 /** Focus Factor bounds + tuning, extracted from config for the calculation layer. */

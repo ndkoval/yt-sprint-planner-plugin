@@ -105,6 +105,7 @@ export const projectConfigSchema = z
     minFocusFactor: z.number().gt(0).lt(1),
     maxFocusFactor: z.number().gt(0).lte(1),
     participants: z.array(participantSchema),
+    managersGroup: z.string().min(1).optional(),
   })
   .strict()
   .refine((c) => c.minFocusFactor < c.maxFocusFactor, {
