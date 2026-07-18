@@ -11,13 +11,14 @@
  *   - POST /api/wizard/wait/dump                      (commit config + restart into the app)
  * then poll /api/config until it returns 200.
  *
- * PLATFORM CAVEAT: YouTrack 2025.1 bundles GraalVM/Truffle 22.0.0.2 for its JS scripting
- * engine. On Apple-Silicon macOS that engine cannot initialise (Truffle 22 has no arm64
- * runtime and its fallback path calls the removed `sun.misc.Unsafe.ensureClassInitialized`),
- * so the app crashes on start REGARDLESS of JDK (verified on JDK 8/11/17/21/25 and the
- * bundled JRE under Rosetta). Run real integration on Linux x64 (CI) where the bundled
- * `internal/java/linux-x64` runtime works. The self-contained demo E2E suite
- * (`npm run test:e2e:demo`) exercises the plugin UI end-to-end on any platform.
+ * PLATFORM NOTE (Apple Silicon): the newer 148xxx builds (YouTrack 2024.2/2024.3/2025.1)
+ * bundle GraalVM/Truffle 22.0.0.2, whose scripting engine cannot initialise on arm64
+ * macOS (no arm64 Truffle runtime; the fallback calls the removed
+ * `sun.misc.Unsafe.ensureClassInitialized`), so those builds crash on start regardless of
+ * JDK. The default below (2024.1.34109) PREDATES that engine and BOOTS on arm64 via the
+ * bundled `internal/java/mac-x64` runtime under Rosetta 2 — verified locally: full wizard
+ * bootstrap, `/api/config` → 200, agile board + sprints + issues via REST, and the real
+ * Kanban board renders in-browser. Override YT_VERSION/YT_DIST_URL to try other builds.
  */
 import { mkdir, writeFile, readFile, access, stat, rm, readdir } from 'node:fs/promises';
 import { constants, createWriteStream } from 'node:fs';
@@ -30,10 +31,18 @@ import { runMain } from './lib/log.mjs';
 import { ARTIFACTS_DIR } from './lib/paths.mjs';
 import { assertDestructiveAllowed, assertNotProduction, makeRunId } from './lib/yt-env.mjs';
 
-// Pinned build — the last YouTrack that ships a standalone (non-Docker) distribution.
-const YT_VERSION = '2025.1.148120';
-const YT_DIST_URL = `https://download.jetbrains.com/charisma/youtrack-${YT_VERSION}.zip`;
-const YT_SHA256 = 'a24f86631bf4ee52a7b33657f13c909f11b9ccbfc81f534730642d29d442dfed';
+// Pinned build — a standalone (non-Docker) distribution that BOOTS on arm64 macOS.
+// 2024.1.34109 predates the GraalVM/Truffle 22 engine that breaks on Apple Silicon (see
+// header). Overridable via env: YT_VERSION, YT_DIST_URL, YT_SHA256 (SHA optional when
+// overriding — warns instead of failing).
+const YT_VERSION = process.env.YT_VERSION ?? '2024.1.34109';
+const YT_DIST_URL =
+  process.env.YT_DIST_URL ?? `https://download.jetbrains.com/charisma/youtrack-${YT_VERSION}.zip`;
+const YT_SHA256 =
+  process.env.YT_SHA256 ?? 'c458bc0c4779362ef1a0ec932c57502f69496aa2667a49bdb0e07367b09c85ce';
+// Strict checksum only when the pinned default (or an explicit YT_SHA256) is in force; a
+// bare YT_VERSION override with no SHA warns instead of failing.
+const YT_SHA_STRICT = process.env.YT_VERSION ? process.env.YT_SHA256 !== undefined : true;
 
 const PORT = Number(process.env.YT_TEST_PORT ?? 8080);
 const BASE_URL = process.env.YT_TEST_BASE_URL ?? `http://localhost:${PORT}`;
@@ -59,9 +68,16 @@ async function sha256(file) {
 }
 
 async function download(log, url, dest) {
+  const verify = async (file) => {
+    const actual = await sha256(file);
+    if (actual === YT_SHA256) return true;
+    if (YT_SHA_STRICT) throw new Error(`checksum mismatch: ${actual} != ${YT_SHA256}`);
+    log.warn(`checksum not pinned for ${YT_VERSION} (got ${actual}); continuing`);
+    return true;
+  };
   if (await exists(dest)) {
-    if ((await sha256(dest)) === YT_SHA256) {
-      log.info(`cached distribution is valid: ${dest}`);
+    if (!YT_SHA_STRICT || (await sha256(dest)) === YT_SHA256) {
+      log.info(`cached distribution present: ${dest}`);
       return;
     }
     log.warn('cached distribution failed checksum; re-downloading');
@@ -71,9 +87,8 @@ async function download(log, url, dest) {
   const res = await fetch(url);
   if (!res.ok || !res.body) throw new Error(`download failed: HTTP ${res.status}`);
   await pipeline(res.body, createWriteStream(dest));
-  const actual = await sha256(dest);
-  if (actual !== YT_SHA256) throw new Error(`checksum mismatch: ${actual} != ${YT_SHA256}`);
-  log.info('downloaded + verified');
+  await verify(dest);
+  log.info('downloaded');
 }
 
 /** Resolve a JDK home for YouTrack. Prefer $YT_TEST_JDK, else the bundled per-OS JRE. */
@@ -175,6 +190,11 @@ runMain('provision:real-youtrack', async (log) => {
   }
   log.info('YouTrack application is up');
 
+  log.step('mint permanent admin token (Hub REST)');
+  const adminToken = await mintAdminToken(BASE_URL, ADMIN_LOGIN, ADMIN_PASSWORD, log);
+  if (adminToken) log.info('admin token minted');
+  else log.warn('could not mint token automatically; mint via Profile > Account Security');
+
   await mkdir(ARTIFACTS_DIR, { recursive: true });
   const manifest = {
     runId,
@@ -187,6 +207,7 @@ runMain('provision:real-youtrack', async (log) => {
     workDir,
     jdk,
     adminLogin: ADMIN_LOGIN,
+    adminToken: adminToken ?? null,
   };
   await writeFile(
     path.join(ARTIFACTS_DIR, 'test-environment-manifest.json'),
@@ -195,10 +216,39 @@ runMain('provision:real-youtrack', async (log) => {
   // Record the home dir so cleanup can stop this exact instance.
   await writeFile(path.join(CACHE_DIR, 'last-run.json'), JSON.stringify({ ytHome, jdk, workDir }));
   log.info('base URL:', BASE_URL, '| admin:', ADMIN_LOGIN);
-  log.warn(
-    'Mint a permanent token in the UI (Profile > Account Security) or via Hub REST and ' +
-      'export it as YT_TEST_ADMIN_TOKEN for the integration tests. // SPIKE: automate token mint.',
-  );
+  if (adminToken) log.info(`export YT_TEST_ADMIN_TOKEN='${adminToken}'  YT_TEST_BASE_URL='${BASE_URL}'`);
   void readdir; // reserved for future orphan scans
   void stat;
 });
+
+/**
+ * Mint a permanent YouTrack API token via Hub REST using the admin's basic-auth
+ * credentials (scoped to the YouTrack service). Verified against 2024.1. Returns the
+ * token string, or null on failure.
+ */
+async function mintAdminToken(base, login, password, log) {
+  const basic = Buffer.from(`${login}:${password}`).toString('base64');
+  const headers = {
+    Authorization: `Basic ${basic}`,
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+  try {
+    const svcRes = await fetch(
+      `${base}/hub/api/rest/services?fields=id,applicationName&query=applicationName:YouTrack`,
+      { headers },
+    );
+    const svc = (await svcRes.json())?.services?.find((s) => s.applicationName === 'YouTrack');
+    if (!svc) return null;
+    const tokRes = await fetch(`${base}/hub/api/rest/users/me/permanenttokens?fields=token`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: `scp-provision-${Date.now()}`, scope: [{ id: svc.id }] }),
+    });
+    const tok = await tokRes.json();
+    return typeof tok?.token === 'string' ? tok.token : null;
+  } catch (err) {
+    log.warn(`token mint failed: ${String(err).slice(0, 120)}`);
+    return null;
+  }
+}

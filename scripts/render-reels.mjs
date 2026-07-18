@@ -23,6 +23,15 @@ const RESULTS_DIR = path.join(DEMO_DIR, 'test-results');
 const SUBTITLES_DIR = path.join(DEMO_DIR, 'subtitles');
 const OUT_DIR = path.join(DEMO_DIR, 'reels');
 
+// Narration voice: a natural, pleasant macOS voice at a calm rate (words/min). Samantha
+// is present on every current macOS; the rate is tuned to match helpers.ts estNarrationMs
+// (~2.5 words/sec) so the video pacing and the spoken audio agree. Override with
+// SCP_SAY_VOICE / SCP_SAY_RATE if a nicer voice is installed (e.g. a Premium/Enhanced one).
+const VOICE_ARGS = [
+  '-v', process.env.SCP_SAY_VOICE ?? 'Samantha',
+  '-r', process.env.SCP_SAY_RATE ?? '175',
+];
+
 // vtt name (without extension) -> substring of the Playwright test-results dir for the video.
 const REELS = [
   { vtt: '01-product-walkthrough', dir: '00-product-walkthrough', title: 'Product walkthrough' },
@@ -113,25 +122,38 @@ runMain('render-reels', async (log) => {
       continue;
     }
 
-    // 1) Synthesize each cue to an aiff.
+    // 1) Synthesize each cue to an aiff with a calm, pleasant voice (a fixed voice/rate
+    //    so runs are reproducible and the cadence matches helpers.ts estNarrationMs).
     const inputs = [];
     for (let i = 0; i < cues.length; i += 1) {
       const aiff = path.join(work, `${reel.vtt}-${i}.aiff`);
-      const say = spawnSync('say', ['-o', aiff, '--', cues[i].text], { encoding: 'utf8' });
+      const say = spawnSync('say', [...VOICE_ARGS, '-o', aiff, '--', cues[i].text], {
+        encoding: 'utf8',
+      });
       if (say.status !== 0 || !(await exists(aiff))) {
         log.warn(`say failed for cue ${i}: ${say.stderr ?? ''}`);
         continue;
       }
-      inputs.push({ file: aiff, startMs: cues[i].startMs });
+      inputs.push({ file: aiff, startMs: cues[i].startMs, durMs: ffprobeDurationSec(aiff) * 1000 });
     }
     if (inputs.length === 0) continue;
 
-    // 2) Overlay each cue at its start time onto one audio track.
+    // 2) Place each clip at its caption's start time, but never before the previous clip
+    //    has finished (+ a small gap) — a backstop so two lines can never talk over each
+    //    other even if a caption beat was authored slightly tight. Authoring paces the
+    //    video to the speech (Captioner.say holds for estNarrationMs), so in practice each
+    //    clip lands at its caption time; this only nudges the rare overrun later.
+    const GAP_MS = 150;
+    let cursor = 0;
+    for (const inp of inputs) {
+      inp.atMs = Math.round(Math.max(inp.startMs, cursor));
+      cursor = inp.atMs + inp.durMs + GAP_MS;
+    }
     const voice = path.join(work, `${reel.vtt}-voice.wav`);
     const args = [];
     inputs.forEach((inp) => args.push('-i', inp.file));
     const filter = inputs
-      .map((inp, i) => `[${i}]adelay=${inp.startMs}|${inp.startMs}[a${i}]`)
+      .map((inp, i) => `[${i}]adelay=${inp.atMs}|${inp.atMs}[a${i}]`)
       .join(';');
     const mix = `${inputs.map((_, i) => `[a${i}]`).join('')}amix=inputs=${inputs.length}:normalize=0[out]`;
     const mixRes = spawnSync(

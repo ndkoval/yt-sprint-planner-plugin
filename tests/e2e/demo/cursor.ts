@@ -12,6 +12,50 @@ export const CURSOR_INIT_SCRIPT = `
 (() => {
   if (window.__demoCursorInstalled) return;
   window.__demoCursorInstalled = true;
+
+  // Title card painted before the app renders when the page is opened with
+  // ?reelIntro=1&reelTitle=..&reelSubtitle=.. — so the VERY FIRST frames of a reel are
+  // the branded card, not the app's loading spinner. Runs as early as possible and again
+  // on DOMContentLoaded (idempotent) because at document-start <body> / the final URL may
+  // not be ready yet. __closeTitleCard fades it out to reveal the app behind it.
+  const ensureTitleCard = () => {
+    try {
+      if (document.getElementById('__demo-titlecard')) return;
+      const params = new URLSearchParams(location.search);
+      if (params.get('reelIntro') !== '1') return;
+      const host = document.body || document.documentElement;
+      if (!host) return;
+      const card = document.createElement('div');
+      card.id = '__demo-titlecard';
+      card.style.cssText = [
+        'position:fixed','inset:0','z-index:2147483647','display:flex','flex-direction:column',
+        'align-items:center','justify-content:center','text-align:center',
+        'background:linear-gradient(135deg,#1a73e8,#0b3d91)','color:#fff',
+        "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+        'opacity:1','transition:opacity 0.4s ease',
+      ].join(';');
+      const titleEl = document.createElement('div');
+      titleEl.style.cssText = 'font-size:44px;font-weight:800;letter-spacing:-0.5px;max-width:82%';
+      titleEl.textContent = params.get('reelTitle') || '';
+      const subEl = document.createElement('div');
+      subEl.style.cssText = 'font-size:21px;margin-top:14px;opacity:0.92;max-width:72%';
+      subEl.textContent = params.get('reelSubtitle') || '';
+      card.appendChild(titleEl);
+      card.appendChild(subEl);
+      host.appendChild(card);
+      window.__closeTitleCard = () =>
+        new Promise((resolve) => {
+          const el = document.getElementById('__demo-titlecard');
+          if (!el) { resolve(); return; }
+          el.style.opacity = '0';
+          setTimeout(() => { el.remove(); resolve(); }, 420);
+        });
+    } catch (_e) { /* ignore */ }
+  };
+  ensureTitleCard();
+  document.addEventListener('DOMContentLoaded', ensureTitleCard);
+  document.addEventListener('readystatechange', ensureTitleCard);
+
   const ensure = () => {
     if (document.getElementById('__demo-cursor')) return;
     const dot = document.createElement('div');

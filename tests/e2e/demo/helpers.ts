@@ -87,6 +87,46 @@ export function settle(page: Page, ms = 650): Promise<void> {
 }
 
 /**
+ * Estimated time to speak `text` at the reel's calm narration cadence, plus a tail of
+ * breathing room. This paces the video to the narration so the synthesized voice (see
+ * scripts/render-reels.mjs, Samantha @ ~175 wpm) never runs into the next line. Kept a
+ * touch generous (2.5 wps) so the actual speech always finishes inside its window.
+ */
+export function estNarrationMs(text: string): number {
+  const words = text.split(/\s+/).filter(Boolean).length;
+  return Math.round((words / 2.5) * 1000) + 600;
+}
+
+/** Reel intro: a branded title card painted before the first frame (see cursor.ts). */
+export interface ReelIntro {
+  title: string;
+  subtitle: string;
+}
+
+/**
+ * A text-less brand-gradient cover used to mask in-reel page navigations (persona
+ * switches): it hides the app's loading spinner behind the brand gradient, so a switch
+ * reads as a smooth branded wipe instead of a white flash. Pair with {@link closeTitleCard}
+ * right after the navigation to fade it away.
+ */
+export const REEL_WIPE: ReelIntro = { title: '', subtitle: '' };
+
+function withReel(params: URLSearchParams, reel?: ReelIntro): void {
+  if (!reel) return;
+  params.set('reelIntro', '1');
+  params.set('reelTitle', reel.title);
+  params.set('reelSubtitle', reel.subtitle);
+}
+
+/** Fade out the reel's title card to reveal the app behind it. No-op off a reel. */
+export async function closeTitleCard(page: Page): Promise<void> {
+  await page.evaluate(
+    () => (window as unknown as { __closeTitleCard?: () => Promise<void> }).__closeTitleCard?.(),
+  );
+  await page.waitForTimeout(200);
+}
+
+/**
  * Show a full-screen title card at the very start of a reel so the recording "introduces
  * itself" before the walkthrough begins. Displays for `ms`, then removes itself.
  */
@@ -152,12 +192,17 @@ export class Captioner {
   private readonly startMs = Date.now();
   constructor(private readonly page: Page) {}
 
-  /** Show a caption on screen and record it as a cue. Empty string hides the caption. */
+  /**
+   * Narrate one line: show the caption, record the cue, and hold for the time it takes to
+   * speak it. Holding here paces the recording to the narration so, once rendered, the
+   * voice for this line finishes before the next `say()` — no overlapping speech.
+   */
   async say(text: string): Promise<void> {
     this.cues.push({ tMs: Date.now() - this.startMs, text });
     await this.page.evaluate((t) => {
       (window as unknown as { __demoSay?: (s: string) => void }).__demoSay?.(t);
     }, text);
+    if (text) await this.page.waitForTimeout(estNarrationMs(text));
   }
 
   /** Write a WebVTT subtitle track for the reel and return the file path. */
@@ -176,20 +221,29 @@ export class Captioner {
   }
 }
 
-/** Open the project-tab widget as a persona and wait for the first data render. */
-export async function openTab(page: Page, persona: Persona, sprintId?: string): Promise<void> {
-  const sprintParam = sprintId ? `&sprint=${sprintId}` : '';
-  await page.goto(`/project-tab/index.html?as=${persona}&projectId=${PROJECT}${sprintParam}`, {
-    waitUntil: 'networkidle',
-  });
+/**
+ * Open the project-tab widget as a persona and wait for the first data render. Pass
+ * `reel` to paint a branded title card as the very first frame (the app loads behind it;
+ * fade it with {@link closeTitleCard} after narrating the intro).
+ */
+export async function openTab(
+  page: Page,
+  persona: Persona,
+  sprintId?: string,
+  reel?: ReelIntro,
+): Promise<void> {
+  const params = new URLSearchParams({ as: persona, projectId: PROJECT });
+  if (sprintId) params.set('sprint', sprintId);
+  withReel(params, reel);
+  await page.goto(`/project-tab/index.html?${params.toString()}`, { waitUntil: 'networkidle' });
   await expect(page.getByText('Sprint capacity', { exact: false }).first()).toBeVisible();
 }
 
-/** Open the project-settings widget as a persona. */
-export async function openSettings(page: Page, persona: Persona): Promise<void> {
-  await page.goto(`/project-settings/index.html?as=${persona}&projectId=${PROJECT}`, {
-    waitUntil: 'networkidle',
-  });
+/** Open the project-settings widget as a persona (optionally with a reel title card). */
+export async function openSettings(page: Page, persona: Persona, reel?: ReelIntro): Promise<void> {
+  const params = new URLSearchParams({ as: persona, projectId: PROJECT });
+  withReel(params, reel);
+  await page.goto(`/project-settings/index.html?${params.toString()}`, { waitUntil: 'networkidle' });
 }
 
 /** Attach a console/page-error collector; call the returned assert at the end. */

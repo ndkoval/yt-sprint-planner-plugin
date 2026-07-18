@@ -8,7 +8,8 @@ import {
   moveTo,
   settle,
   Captioner,
-  showTitleCard,
+  closeTitleCard,
+  REEL_WIPE,
 } from './helpers.js';
 
 const API = '/api/apps/sprint-capacity-planner/backend';
@@ -26,9 +27,12 @@ test.describe('Marketing reel — team capacity', () => {
     const cap = new Captioner(page);
 
     // Manager creates the next Sprint.
-    await openTab(page, 'manager', 'sprint-2');
-    await showTitleCard(page, 'Plan capacity with your team', 'Everyone sets their own availability');
-    await cap.say('Plan a Sprint with your whole team');
+    await openTab(page, 'manager', 'sprint-2', {
+      title: 'Plan capacity with your team',
+      subtitle: 'Everyone sets their own availability',
+    });
+    await cap.say('Plan a Sprint with your whole team.');
+    await closeTitleCard(page);
     await humanClick(page, page.getByRole('button', { name: 'Create next Sprint' }));
     await expect(page.getByText('AppGlass 2026-S3', { exact: true })).toBeVisible();
     await humanClick(page, page.getByRole('button', { name: 'Create Sprint' }));
@@ -43,35 +47,38 @@ test.describe('Marketing reel — team capacity', () => {
     expect(sprintId).not.toBe('');
 
     // Alice sets availability + a note.
-    await openTab(page, 'alice', sprintId);
-    await cap.say('Alice adjusts her availability and adds a note');
+    await openTab(page, 'alice', sprintId, REEL_WIPE);
+    await closeTitleCard(page);
+    await cap.say('Alice adjusts her availability and adds a note.');
     await humanFill(page, page.getByLabel('Available capacity in days for Alice Smith'), '7');
     await page.getByLabel('Available capacity in days for Alice Smith').blur();
     await humanFill(page, page.getByLabel('Note for Alice Smith'), 'Conference Mon-Tue');
     await page.getByLabel('Note for Alice Smith').blur();
-    await cap.say('She can only edit her own row');
+    await cap.say('She can only edit her own row.');
     await expect(page.getByLabel('Available capacity in days for Alice Smith')).toHaveValue('7', {
       timeout: 15_000,
     });
     await settle(page, 900);
 
     // Bob sets his availability too.
-    await openTab(page, 'bob', sprintId);
-    await cap.say('Bob sets his availability');
+    await openTab(page, 'bob', sprintId, REEL_WIPE);
+    await closeTitleCard(page);
+    await cap.say('Bob sets his availability too.');
     await humanFill(page, page.getByLabel('Available capacity in days for Bob Jones'), '9');
     await page.getByLabel('Available capacity in days for Bob Jones').blur();
     await expect(page.getByLabel('Available capacity in days for Bob Jones')).toHaveValue('9', {
       timeout: 15_000,
     });
-    await settle(page, 900);
+    await settle(page, 700);
 
     // Manager sees the team's capacity roll up.
-    await openTab(page, 'manager', sprintId);
-    await cap.say('Raw and planned capacity reflect the whole team — automatically');
+    await openTab(page, 'manager', sprintId, REEL_WIPE);
+    await closeTitleCard(page);
+    await cap.say('Planned capacity reflects the whole team, automatically.');
     await moveTo(page, page.getByText('Planned capacity', { exact: true }));
     await expect(page.getByText('Alice Smith')).toBeVisible();
-    await cap.say('Sprint Capacity Planner — the team plans together');
-    await settle(page, 1600);
+    await cap.say('Sprint Capacity Planner — the team plans together.');
+    await settle(page, 1200);
     await info.attach('team-capacity.png', {
       body: await page.screenshot({ fullPage: true }),
       contentType: 'image/png',
