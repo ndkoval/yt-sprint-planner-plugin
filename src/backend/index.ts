@@ -37,10 +37,16 @@ interface YtResponse {
   json(value: unknown): void;
 }
 
+interface YtGlobalStorage {
+  extensionProperties: Record<string, unknown>;
+}
+
 interface YtContext {
   request: YtRequest;
   response: YtResponse;
   settings?: Record<string, unknown>;
+  globalStorage?: YtGlobalStorage;
+  currentUser?: { login?: string; isSystem?: boolean } | null;
 }
 
 /** The envelope the widget sends: the real method + app-relative path (may carry ?query). */
@@ -67,19 +73,36 @@ const app = createApp({ client: new YouTrackHttpClient() });
 
 /** Dispatch one tunnelled widget request through the router. */
 async function handleApi(ctx: YtContext): Promise<void> {
-  // The backend has no fetch and no automatic same-instance REST auth, so authenticate
-  // as the app using a token + base URL from app settings (see youtrack-http-client.ts).
-  const settings = ctx.settings ?? {};
-  const token = typeof settings.youtrackToken === 'string' ? settings.youtrackToken : null;
-  const baseUrl = typeof settings.youtrackBaseUrl === 'string' ? settings.youtrackBaseUrl : null;
-  configureRuntimeConnection(baseUrl, token);
-
   let envelope: RequestEnvelope = {};
   try {
     envelope = (ctx.request.json() as RequestEnvelope) ?? {};
   } catch {
     envelope = {};
   }
+
+  // The backend runtime has no `fetch` and no automatic same-instance REST auth, so it
+  // authenticates as the app with a token. The token is stored once in the app's global
+  // storage via the `/__configure` control path (an admin sets it at provisioning time);
+  // app settings are used as a fallback. SPIKE/SECURITY: an admin-scoped token stored here
+  // is over-privileged — the proper long-term path is the Backend JS (entities) API, which
+  // needs no token. See youtrack-http-client.ts.
+  const store = ctx.globalStorage?.extensionProperties ?? {};
+  if (envelope.path === '/__configure') {
+    const cfg = (envelope.body ?? {}) as { token?: unknown; baseUrl?: unknown };
+    if (typeof cfg.token === 'string') store.scpYoutrackToken = cfg.token;
+    if (typeof cfg.baseUrl === 'string') store.scpYoutrackBaseUrl = cfg.baseUrl;
+    ctx.response.code = 200;
+    ctx.response.json({ status: 200, body: { configured: true } });
+    return;
+  }
+  const settings = ctx.settings ?? {};
+  const token =
+    (typeof store.scpYoutrackToken === 'string' ? store.scpYoutrackToken : null) ??
+    (typeof settings.youtrackToken === 'string' ? settings.youtrackToken : null);
+  const baseUrl =
+    (typeof store.scpYoutrackBaseUrl === 'string' ? store.scpYoutrackBaseUrl : null) ??
+    (typeof settings.youtrackBaseUrl === 'string' ? settings.youtrackBaseUrl : null);
+  configureRuntimeConnection(baseUrl, token);
   const rawPath = typeof envelope.path === 'string' && envelope.path.length > 0 ? envelope.path : '/';
   const qIndex = rawPath.indexOf('?');
   const pathOnly = qIndex >= 0 ? rawPath.slice(0, qIndex) : rawPath;
