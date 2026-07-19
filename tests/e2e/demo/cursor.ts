@@ -32,7 +32,9 @@ export const CURSOR_INIT_SCRIPT = `
         'align-items:center','justify-content:center','text-align:center',
         'background:linear-gradient(135deg,#1a73e8,#0b3d91)','color:#fff',
         "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
-        'opacity:1','transition:opacity 0.4s ease',
+        // pointer-events:none so it visually covers the loading app but lets the harness
+        // interact with elements underneath while the card is still shown.
+        'opacity:1','transition:opacity 0.4s ease','pointer-events:none',
       ].join(';');
       const titleEl = document.createElement('div');
       titleEl.style.cssText = 'font-size:44px;font-weight:800;letter-spacing:-0.5px;max-width:82%';

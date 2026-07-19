@@ -165,11 +165,15 @@ async function runMain() {
   log('managed sprint', sprint.id, sprint.name, sprint.start, '->', sprint.finish);
 
   // Seed issues onto the managed sprint with effort, assignee and state.
+  // Only project members are assignable; admin is the reliable one on a fresh instance.
+  // Some issues go to admin (shows per-person Load), others stay unassigned (shows the
+  // Unassigned bucket). MEMBERS teammates get assigned too if they're on the project team.
+  const assignable = new Set(['admin']);
   const specs = [
-    { s: 'Ship first customer preview', state: 'Fixed', orig: '1w', cur: '0h', who: alice },
-    { s: 'Wire up capacity table', state: 'In Progress', orig: '3d', cur: '1d 4h', who: alice },
-    { s: 'Auto-recalc metrics', state: 'In Progress', orig: '2d', cur: '1d', who: bob },
-    { s: 'Carry-over on create-next', state: 'Open', orig: '1d', cur: '1d', who: bob },
+    { s: 'Ship first customer preview', state: 'Fixed', orig: '1w', cur: '0h', who: 'admin' },
+    { s: 'Wire up capacity table', state: 'In Progress', orig: '3d', cur: '1d 4h', who: 'admin' },
+    { s: 'Auto-recalc metrics', state: 'In Progress', orig: '2d', cur: '1d', who: 'alice' },
+    { s: 'Carry-over on create-next', state: 'Open', orig: '1d', cur: '1d', who: 'bob' },
     { s: 'Per-person load bar', state: 'Open', orig: '4h', cur: '4h', who: null },
   ];
   for (const sp of specs) {
@@ -178,8 +182,10 @@ async function runMain() {
     await command(`Original Effort ${sp.orig} Current Effort ${sp.cur}`, [id]).catch((e) => log('effort warn', e.message.slice(0, 80)));
     await command(`State ${sp.state}`, [id]).catch(() => {});
     if (sp.who) {
-      const login = sp.who === alice ? 'alice' : sp.who === bob ? 'bob' : 'charlie';
-      await command(`Assignee ${login}`, [id]).catch(() => command(`for ${login}`, [id]).catch(() => {}));
+      // Try the requested assignee; on failure (not a project member) fall back to admin.
+      const ok = await command(`Assignee ${sp.who}`, [id]).then(() => true).catch(() => false);
+      if (ok) assignable.add(sp.who);
+      else await command('Assignee admin', [id]).catch(() => {});
     }
   }
   log('issues seeded', specs.length);

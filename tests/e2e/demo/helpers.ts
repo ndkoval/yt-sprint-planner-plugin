@@ -207,7 +207,8 @@ export class Captioner {
 
   /** Write a WebVTT subtitle track for the reel and return the file path. */
   async writeVtt(name: string): Promise<string> {
-    const dir = path.join('artifacts', 'demo', 'subtitles');
+    // Overridable so the real-YouTrack demo suite writes to its own artifacts dir.
+    const dir = process.env.SCP_SUBTITLES_DIR ?? path.join('artifacts', 'demo', 'subtitles');
     await mkdir(dir, { recursive: true });
     const file = path.join(dir, `${name}.vtt`);
     const visible = this.cues.filter((c) => c.text.length > 0);

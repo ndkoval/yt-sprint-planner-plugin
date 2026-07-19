@@ -18,7 +18,9 @@ import path from 'node:path';
 import { runMain } from './lib/log.mjs';
 import { ARTIFACTS_DIR } from './lib/paths.mjs';
 
-const DEMO_DIR = path.join(ARTIFACTS_DIR, 'demo');
+// Base artifacts dir is overridable so this renders both the mock demo suite and the
+// real-YouTrack demo suite (REELS_BASE=real-demo). Reel list is overridable via REELS_JSON.
+const DEMO_DIR = path.join(ARTIFACTS_DIR, process.env.REELS_BASE ?? 'demo');
 const RESULTS_DIR = path.join(DEMO_DIR, 'test-results');
 const SUBTITLES_DIR = path.join(DEMO_DIR, 'subtitles');
 const OUT_DIR = path.join(DEMO_DIR, 'reels');
@@ -33,13 +35,25 @@ const VOICE_ARGS = [
 ];
 
 // vtt name (without extension) -> substring of the Playwright test-results dir for the video.
-const REELS = [
+const MOCK_REELS = [
   { vtt: '01-product-walkthrough', dir: '00-product-walkthrough', title: 'Product walkthrough' },
   { vtt: '02-team-capacity', dir: '00b-team-capacity', title: 'Team capacity' },
   { vtt: '03-team-configuration', dir: '00c-team-configuration', title: 'Team configuration' },
   { vtt: '04-installation', dir: '00d-installation', title: 'Installation' },
   { vtt: '05-per-person-planning', dir: '09-assignment', title: 'Per-person planning' },
 ];
+// Real-YouTrack reels (recorded against a live instance).
+const REAL_REELS = [
+  { vtt: '01-real-walkthrough', dir: '00-walkthrough', title: 'Product walkthrough (real YouTrack)' },
+  { vtt: '02-real-team-capacity', dir: '01-team-capacity', title: 'Team capacity (real YouTrack)' },
+  { vtt: '03-real-settings', dir: '02-settings', title: 'Configuration (real YouTrack)' },
+  { vtt: '04-real-board', dir: '03-board', title: 'Native board (real YouTrack)' },
+];
+const REELS = process.env.REELS_JSON
+  ? JSON.parse(process.env.REELS_JSON)
+  : process.env.REELS_BASE === 'real-demo'
+    ? REAL_REELS
+    : MOCK_REELS;
 
 function have(bin, arg = '-version') {
   return spawnSync(bin, [arg], { stdio: 'ignore' }).status === 0;
