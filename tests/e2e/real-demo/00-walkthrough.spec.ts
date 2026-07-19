@@ -17,7 +17,7 @@ import {
  * one-click next Sprint with carry-over, and the native Kanban board. Recorded 720p.
  */
 test.describe('Real YouTrack — product walkthrough', () => {
-  test('plan a Sprint end to end on a real instance', async ({ page, context }, info) => {
+  test('plan a Sprint end to end on a real instance', async ({ page }, info) => {
     const assertClean = guardErrors(page);
     const cap = new Captioner(page);
 
@@ -62,23 +62,15 @@ test.describe('Real YouTrack — product walkthrough', () => {
       await settle(page, 600);
     }
     await humanClick(page, f2.getByRole('button', { name: 'Create Sprint' }));
-    await settle(page, 1500);
-    await cap.say('The Sprint is created on the native YouTrack board.');
-
-    // ── 3. Open the real native Kanban board.
-    await openProjectApp(page, 'Sprint Capacity'); // back to a stable view
-    const [board] = await Promise.all([
-      context.waitForEvent('page'),
-      humanClick(page, (await appFrame(page)).getByRole('button', { name: 'Open board' })),
-    ]).catch(async () => [null] as const);
-    if (board) {
-      await board.waitForLoadState('domcontentloaded');
-      await board.waitForTimeout(6000);
-      await board.bringToFront();
-      await info.attach('real-board.png', { body: await board.screenshot(), contentType: 'image/png' });
-    }
+    await settle(page, 1800);
+    // The new Sprint is created on the native YouTrack board; the board itself is shown in
+    // the dedicated native-board reel (03-board), so we don't open the popup here (a
+    // popup-wait can hang). End on the planner, which now reflects the new Sprint.
+    await cap.say('The Sprint is created on YouTrack’s native board.');
+    await settle(page, 900);
     await cap.say('Sprint Capacity Planner — plan with confidence, on real YouTrack.');
     await settle(page, 1500);
+    await info.attach('walkthrough.png', { body: await page.screenshot(), contentType: 'image/png' });
 
     const vtt = await cap.writeVtt('01-real-walkthrough');
     await info.attach('subtitles.vtt', { path: vtt, contentType: 'text/vtt' });
