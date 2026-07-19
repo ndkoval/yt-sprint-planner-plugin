@@ -23,23 +23,30 @@ try {
     await (await p.$('button[type=submit]')).click();
     await p.waitForTimeout(4000);
   }
-  await p.goto(`${B}/projects/${PROJECT_KEY}?tab=apps`, { waitUntil: 'domcontentloaded' });
-  await p.waitForTimeout(3500);
-  const body = (await p.textContent('body')) || '';
-  if (new RegExp(APP_TITLE, 'i').test(body)) {
-    console.log(JSON.stringify({ attached: true, alreadyAttached: true }));
-  } else {
-    await p.getByRole('button', { name: /Add app/i }).click();
-    await p.waitForTimeout(900);
-    await p.getByText(/^Attach app$/).click();
-    await p.waitForTimeout(1200);
-    await p.getByPlaceholder(/Filter items/i).fill(APP_TITLE);
-    await p.waitForTimeout(1500);
-    await p.getByText(new RegExp(APP_TITLE, 'i')).first().click();
+  // Verify by the widget sidebar item ("Sprint Capacity"), not just the title text.
+  const isAttached = async () => {
+    await p.goto(`${B}/projects/${PROJECT_KEY}?tab=apps`, { waitUntil: 'domcontentloaded' });
     await p.waitForTimeout(3500);
-    const after = (await p.textContent('body')) || '';
-    console.log(JSON.stringify({ attached: new RegExp(APP_TITLE, 'i').test(after) }));
+    return (await p.getByText(/^Sprint Capacity$/).count()) > 0;
+  };
+  let attached = await isAttached();
+  for (let i = 0; i < 4 && !attached; i += 1) {
+    try {
+      await p.getByRole('button', { name: /Add app/i }).click();
+      await p.waitForTimeout(1000);
+      await p.getByText(/^Attach app$/).click();
+      await p.waitForTimeout(1200);
+      await p.getByPlaceholder(/Filter items/i).fill(APP_TITLE);
+      await p.waitForTimeout(1600);
+      await p.getByText(new RegExp(APP_TITLE, 'i')).first().click();
+      await p.waitForTimeout(3500);
+    } catch {
+      await p.keyboard.press('Escape').catch(() => {});
+    }
+    attached = await isAttached(); // reload + re-check (attach can lag)
   }
+  console.log(JSON.stringify({ attached }));
+  if (!attached) process.exitCode = 1;
 } catch (e) {
   console.log(JSON.stringify({ attached: false, error: String(e.message).slice(0, 140) }));
 } finally {
