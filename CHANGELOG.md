@@ -4,6 +4,26 @@ All notable changes to the Sprint Capacity Planner are documented here. The form
 
 ## [Unreleased]
 
+### Real YouTrack demos + integration
+
+- **Demos now run against a REAL YouTrack.** New `tests/e2e/real-demo` suite drives the app
+  installed inside a live YouTrack (Docker 2025.3) — the actual app widgets (in their
+  iframe) and the **native YouTrack Kanban board** — and records four narrated 720p reels
+  (walkthrough, team capacity, configuration, native board). `npm run demo:real`
+  provisions the instance, records, renders, and QAs via the demo-video-review skill (all
+  reels ✅ APPROVE).
+- **Removed the custom board stub.** The hand-built `boardStubHtml` / `/agiles` mock board
+  is gone; the native board is shown only from the real instance. The mock demo suite now
+  drives the app's own widgets only (demo `08-sprint-navigation` removed).
+- **The app now actually runs inside real YouTrack.** Fixed the Apps-SDK integration that
+  was previously stubbed: HTTP handler discovery + shape, module load (no Node globals),
+  the `@jetbrains/youtrack-scripting-api/http` transport, extension-property persistence
+  (via `AppGlobalStorage`), group-membership lookup, a configurable managers group, and a
+  first-run config bootstrap. Provisioning/seeding scripts:
+  `provision-real-youtrack.mjs` (boots 2024.1 standalone on arm64; 2025.3 via Docker),
+  `install-app-real-youtrack.mjs`, `setup-real-youtrack-demo.mjs`, `provision-real-demo.mjs`.
+
+
 ### Added (Jira-aligned planning)
 
 - **Carry over unfinished work.** Create-next now matches Jira's Complete-Sprint step: the dialog names the exact count of unresolved issues in the latest Sprint and moves them into the new Sprint when opted in. `SprintView.unresolvedIssueCount` and `SprintSummary.unresolvedIssueCount` surface the count (persisted as `scpUnresolvedIssueCount`); the count in the dialog is always derived from the **latest** managed Sprint (the one being completed), not whichever Sprint is being viewed. Covered by unit + contract tests and the create-next / product-walkthrough demos.

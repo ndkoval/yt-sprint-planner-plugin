@@ -66,74 +66,6 @@ function parseCookies(header: string | undefined): Record<string, string> {
  * a same-origin fetch against API_BASE and reads projectId from the query string.
  */
 /**
- * A stand-in for the native YouTrack agile board that "Open board" opens — rendered as a
- * Kanban board with **sprints enabled**: one swimlane per Sprint, three columns
- * (To Do / In Progress / Done), and issue cards. Links back into the Sprint Capacity
- * planner for each Sprint. Demonstrates "how issues look with the current Sprints" and
- * "go to a Sprint from there".
- */
-function boardStubHtml(): string {
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"/><title>AppGlass Board — Kanban</title>
-<style>
-  body{font:14px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;padding:24px;color:#1f2326;background:#f4f5f7}
-  h1{font-size:20px;margin:0 0 2px} .sub{color:#737577;margin:0 0 20px}
-  .swimlane{background:#fff;border:1px solid #dfe1e6;border-radius:10px;padding:14px 16px;margin-bottom:18px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
-  .lane-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-  .lane-head h2{font-size:16px;margin:0}
-  .cols{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-  .col{background:#f4f5f7;border-radius:8px;padding:10px;min-height:70px}
-  .col h3{font:600 12px/1 -apple-system,sans-serif;text-transform:uppercase;letter-spacing:.05em;color:#737577;margin:0 0 10px}
-  .col .count{color:#a4a7ab;font-weight:600}
-  .card{background:#fff;border:1px solid #e3e5e8;border-left:3px solid #1a73e8;border-radius:6px;padding:8px 10px;margin-bottom:8px;box-shadow:0 1px 1px rgba(0,0,0,.04)}
-  .card.done{border-left-color:#3a923a;opacity:.85}
-  .card .id{font-weight:700} .card .meta{color:#737577;font-size:12px;margin-top:3px}
-  .card .who{display:inline-block;margin-top:6px;font-size:11px;background:#eef1f5;color:#3b4048;border-radius:10px;padding:1px 8px}
-  a.open-planner{color:#1a73e8;text-decoration:none;font-weight:600;font-size:13px}
-</style></head>
-<body>
-  <h1>AppGlass Board</h1>
-  <p class="sub">Kanban board — sprints enabled. One swimlane per Sprint; open one in the Sprint Capacity planner.</p>
-  <div id="board" aria-live="polite">Loading…</div>
-<script>
-(async function(){
-  var api='/api/apps/sprint-capacity-planner/backend';
-  var as=(document.cookie.match(/demo_as=([^;]+)/)||[])[1]||'manager';
-  var names={'1-1':'Alice','1-2':'Bob','1-3':'Charlie','1-99':'Morgan'};
-  var sprints=await (await fetch(api+'/sprints?projectId=proj-demo')).json();
-  var root=document.getElementById('board'); root.innerHTML='';
-  var days=function(m){return m==null?'—':(Math.round((m/480)*100)/100)+'d';};
-  var COLS=[['To Do','todo'],['In Progress','doing'],['Done','done']];
-  var laneOf=function(it){
-    if(it.resolved) return 'done';
-    if(it.currentEffortMinutes!=null && it.originalEffortMinutes!=null && it.currentEffortMinutes<it.originalEffortMinutes) return 'doing';
-    return 'todo';
-  };
-  for (var i=0;i<sprints.length;i++){
-    var s=sprints[i];
-    var issues=await (await fetch('/__demo/issues?sprintId='+encodeURIComponent(s.id))).json();
-    var colHtml=function(key){
-      var cards=issues.filter(function(it){return laneOf(it)===key;}).map(function(it){
-        var who=it.assigneeId?('<span class="who">'+(names[it.assigneeId]||it.assigneeId)+'</span>'):'<span class="who">Unassigned</span>';
-        return '<div class="card '+(it.resolved?'done':'')+'"><div class="id">'+it.id+'</div>'+
-          '<div class="meta">Current '+days(it.currentEffortMinutes)+' · Est '+days(it.originalEffortMinutes)+'</div>'+who+'</div>';
-      }).join('');
-      var label=COLS.filter(function(c){return c[1]===key;})[0][0];
-      var n=issues.filter(function(it){return laneOf(it)===key;}).length;
-      return '<div class="col"><h3>'+label+' <span class="count">'+n+'</span></h3>'+(cards||'')+'</div>';
-    };
-    var lane=document.createElement('div'); lane.className='swimlane'; lane.setAttribute('data-sprint',s.id);
-    lane.innerHTML='<div class="lane-head"><h2>'+s.name+'</h2>'+
-      '<a class="open-planner" href="/project-tab/index.html?projectId=proj-demo&as='+as+'&sprint='+encodeURIComponent(s.id)+'">Open in Sprint Capacity →</a></div>'+
-      '<div class="cols">'+colHtml('todo')+colHtml('doing')+colHtml('done')+'</div>';
-    root.appendChild(lane);
-  }
-})();
-</script>
-</body></html>`;
-}
-
-/**
  * A simulated YouTrack "Install app" admin screen for the installation demo reel. It
  * mirrors the real flow — upload the packaged ZIP, install, attach to a project, open
  * settings — without needing a live YouTrack (which can't run its scripting engine on
@@ -307,11 +239,9 @@ export async function startMockServer(port: number): Promise<{ close: () => Prom
 
     // ---- Board stub: what "Open board" opens. Lists each Sprint's issues and links
     // back into the planner for that Sprint (so you can "go to a Sprint from there"). ----
-    if (url.pathname.startsWith('/agiles/')) {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(boardStubHtml());
-      return;
-    }
+    // NB: there is no custom /agiles board stub — the native YouTrack Kanban board is shown
+    // only in the REAL-YouTrack demo suite (tests/e2e/real-demo). This mock harness drives
+    // the app's own widgets, never a fake board.
 
     // ---- Demo hook: simulate the board+workflow adding/estimating a task ----
     if (url.pathname === '/__demo/add-issue') {

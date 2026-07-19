@@ -24,7 +24,7 @@ const API = '/api/apps/sprint-capacity-planner/backend';
  * title card, on-screen captions + a WebVTT subtitle track.
  */
 test.describe('Marketing reel — product walkthrough', () => {
-  test('plan a Sprint end to end', async ({ page, context }, info) => {
+  test('plan a Sprint end to end', async ({ page }, info) => {
     const assertClean = guardErrors(page);
     const cap = new Captioner(page);
 
@@ -125,22 +125,12 @@ test.describe('Marketing reel — product walkthrough', () => {
       .poll(async () => (await remaining.textContent())?.trim(), { timeout: 15_000 })
       .not.toBe(remainingBefore);
     await settle(page, 1100);
-
-    // ── 5. Open the board to see the issues behind the numbers.
-    const [board] = await Promise.all([
-      context.waitForEvent('page'),
-      humanClick(page, page.getByRole('button', { name: 'Open board' })),
-    ]);
-    await board.waitForLoadState('networkidle');
-    await expect(board.getByRole('heading', { name: 'AppGlass Board' })).toBeVisible();
-    await page.goto('/agiles/board-demo?as=manager', { waitUntil: 'networkidle' });
-    await cap.say('The native Kanban board stays the source of truth.');
-    await expect(page.getByRole('heading', { name: 'AppGlass Board' })).toBeVisible();
-    await expect(page.getByText('AG-10', { exact: true })).toBeVisible();
-    await moveTo(page, page.getByText('AG-10', { exact: true }));
+    // The native Kanban board is shown in the REAL-YouTrack demo suite (tests/e2e/real-demo);
+    // this deterministic suite drives only the app's own widgets, never a stub board.
     await cap.say('Sprint Capacity Planner — plan with confidence, no busywork.');
-    await settle(page, 1200);
-    await info.attach('walkthrough-board.png', {
+    await moveTo(page, page.getByText('Remaining capacity', { exact: true }));
+    await settle(page, 1400);
+    await info.attach('walkthrough-overview.png', {
       body: await page.screenshot({ fullPage: true }),
       contentType: 'image/png',
     });
