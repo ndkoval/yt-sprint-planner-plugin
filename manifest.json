@@ -3,12 +3,12 @@
   "name": "sprint-capacity-planner",
   "title": "Sprint Capacity Planner",
   "description": "Capacity planning, computed metrics and a one-click next-Sprint button on top of native YouTrack Sprints. No service issues, no locks, no committed scope.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "vendor": {
     "name": "Nikita Koval",
     "url": "https://github.com/ndkoval/yt-sprint-planner-plugin"
   },
-  "minYouTrackVersion": "2024.3",
+  "minYouTrackVersion": "2024.3.0",
   "icon": "assets/icon.svg",
   "iconDark": "assets/icon-dark.svg",
   "widgets": [
