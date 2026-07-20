@@ -106,12 +106,22 @@ jobs:
           "$HOME/.piper-venv/bin/piper" --help >/dev/null 2>&1 && echo "Piper ready"
       - name: Record the two reels (Docker + Xvfb)
         run: npm run demo:record:docker
-      - name: Upload demo reels + report
+      # Each reel is its own artifact, and only the resulting .mp4 (no webm/subtitles/report).
+      - name: Upload setup demo
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: demo-reels
-          path: artifacts/demo
+          name: demo-setup
+          path: artifacts/demo/reels/01-setup.mp4
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Upload walkthrough demo
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-walkthrough
+          path: artifacts/demo/reels/02-walkthrough.mp4
+          if-no-files-found: warn
           retention-days: 30
       - name: YouTrack logs (on failure)
         if: failure()
