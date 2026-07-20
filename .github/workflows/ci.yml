@@ -66,6 +66,8 @@ jobs:
     needs: build-and-test
     if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.record_demos) }}
     timeout-minutes: 45
+    permissions:
+      contents: write # publish the reels as raw .mp4 release assets (demos-latest)
     env:
       YT_TEST_BASE_URL: http://localhost:8080
       # The reels log in as the admin account (the seed sets its display name to "Nikita Koval").
@@ -114,23 +116,23 @@ jobs:
           YT_TEST_ADMIN_TOKEN="$(cat /tmp/yt25-token.txt)"
           export YT_TEST_ADMIN_TOKEN
           npx vitest run tests/youtrack
-      # Each reel is its own artifact, and only the resulting .mp4 (no webm/subtitles/report).
-      - name: Upload setup demo
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: demo-setup
-          path: artifacts/demo/reels/01-setup.mp4
-          if-no-files-found: warn
-          retention-days: 30
-      - name: Upload walkthrough demo
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: demo-walkthrough
-          path: artifacts/demo/reels/02-walkthrough.mp4
-          if-no-files-found: warn
-          retention-days: 30
+      # Publish each reel as a RAW, directly-playable .mp4 — GitHub always zips upload-artifact
+      # outputs, so instead we attach the reels to a rolling "demos-latest" pre-release (release
+      # assets download as raw files). One asset per reel; always the newest from main.
+      - name: Publish reels as raw .mp4 (demos-latest release)
+        if: ${{ always() && github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f artifacts/demo/reels/01-setup.mp4 ] && [ ! -f artifacts/demo/reels/02-walkthrough.mp4 ]; then
+            echo "no reels were produced — nothing to publish"; exit 0
+          fi
+          cp -f artifacts/demo/reels/01-setup.mp4 install.mp4 2>/dev/null || true
+          cp -f artifacts/demo/reels/02-walkthrough.mp4 walkthrough.mp4 2>/dev/null || true
+          gh release view demos-latest >/dev/null 2>&1 || \
+            gh release create demos-latest --prerelease --title "Latest demo reels" \
+              --notes "Raw .mp4 demo reels (install + walkthrough), auto-updated from the latest main build."
+          gh release upload demos-latest install.mp4 walkthrough.mp4 --clobber
       - name: YouTrack logs (on failure)
         if: failure()
         run: docker logs youtrack-ci 2>&1 | tail -200 || true
