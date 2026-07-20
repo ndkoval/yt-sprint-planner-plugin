@@ -95,6 +95,35 @@ export interface BoardSummary {
   usesSprints: boolean;
 }
 
+/** A YouTrack user, for pickers (participant selection, assignee dropdowns). */
+export interface UserSummary {
+  id: string;
+  login: string;
+  name: string;
+}
+
+/** A project custom field, for the effort-field pickers in settings. */
+export interface ProjectFieldSummary {
+  name: string;
+  /** YouTrack field type, e.g. "period", "integer". */
+  type: string;
+}
+
+/** One Sprint issue as shown in the planner's "plan work" table (GET /sprints/:id/issues). */
+export interface IssueView {
+  id: string;
+  /** Human-readable id, e.g. "AGP-42" (falls back to the internal id if absent). */
+  idReadable: string;
+  summary: string;
+  /** Stable user id of the current assignee, or null when unassigned. */
+  assigneeId: string | null;
+  /** Display name of the current assignee, or null when unassigned. */
+  assigneeName: string | null;
+  originalEffortMinutes: number | null;
+  currentEffortMinutes: number | null;
+  resolved: boolean;
+}
+
 export interface SprintSummary {
   id: string;
   name: string;
@@ -161,6 +190,17 @@ export interface OverrideFocusFactorRequest {
 /** POST /sprints/{id}/calibration/exclude */
 export interface ExcludeCalibrationRequest {
   reason: string;
+}
+
+/**
+ * POST /sprints/{id}/issues/{issueId}/plan — plan an issue by dragging it on the board:
+ * pull it into (or out of) the Sprint and set its assignee in one action.
+ */
+export interface PlanIssueRequest {
+  /** True to ensure the issue is in the Sprint; false to send it back to the backlog. */
+  inSprint: boolean;
+  /** Stable user id to assign, or null to unassign (applied when in the Sprint). */
+  assigneeId: string | null;
 }
 
 /** GET /diagnostics (manager-only). */

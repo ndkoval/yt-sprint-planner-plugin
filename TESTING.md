@@ -1,13 +1,13 @@
 # Testing
 
-The suite is a pyramid: many fast, hermetic tests at the base; a small number of real-instance and browser tests at the top that self-skip without an instance. All commands come from [`package.json`](package.json).
+The suite is a pyramid: many fast, hermetic tests at the base; a small number of instance and browser tests at the top that self-skip without an instance. All commands come from [`package.json`](package.json).
 
-| Layer | Location | Command | Needs a real instance? |
+| Layer | Location | Command | Needs a YouTrack instance? |
 | --- | --- | --- | --- |
 | Unit | `tests/unit` | `npm run test:unit` | no |
 | Contract | `tests/contract` | `npm run test:contract` | no |
 | Coverage (unit+contract) | — | `npm run coverage` | no |
-| Real-YouTrack integration | `tests/real-youtrack` | `npm run test:integration:real` | **yes** (local, gated) |
+| Real-YouTrack integration | `tests/youtrack` | `npm run test:integration` | **yes** (local, gated) |
 | E2E (Playwright) | `tests/e2e` | `npm run test:e2e` | **yes** (self-skips) |
 | UI-artifact analysis | — | `npm run test:e2e:analyze` | no |
 | Full fast lane | — | `npm run test:all` | no |
@@ -39,17 +39,17 @@ npm run test:contract
 
 ---
 
-## Real-YouTrack integration (`tests/real-youtrack`)
+## Real-YouTrack integration (`tests/youtrack`)
 
-Drives the live REST API of a **local, disposable** YouTrack Server — **no Docker**. The orchestrator [`run-real-integration.mjs`](scripts/run-real-integration.mjs) runs *provision → seed → vitest → cleanup* (cleanup always runs in `finally`). The vitest suite [`integration.test.ts`](tests/real-youtrack/integration.test.ts) self-skips when `YT_TEST_BASE_URL` is unset.
+Drives the live REST API of a **local, disposable** YouTrack Server — **no Docker**. The orchestrator [`run-integration.mjs`](scripts/run-integration.mjs) runs *provision → seed → vitest → cleanup* (cleanup always runs in `finally`). The vitest suite [`integration.test.ts`](tests/youtrack/integration.test.ts) self-skips when `YT_TEST_BASE_URL` is unset.
 
 **Harness scripts** ([`scripts/`](scripts/), shared guards in [`lib/yt-env.mjs`](scripts/lib/yt-env.mjs)):
 
 | Script | npm command | Role |
 | --- | --- | --- |
-| `provision-real-youtrack.mjs` | `provision:real-youtrack` | Download a **pinned** YouTrack Server ZIP, unpack, launch `bin/youtrack.sh` on a local port, poll readiness, write `artifacts/test-environment-manifest.json`. |
-| `seed-real-youtrack.mjs` | `seed:real-youtrack` | Create an isolated project/board/fields/users via REST, namespaced by run id. |
-| `cleanup-real-youtrack.mjs` | `cleanup:real-youtrack` | Delete seeded entities, stop the process, remove temp dirs; writes `artifacts/orphan-cleanup-report.json`. |
+| `provision-youtrack.mjs` | `provision:youtrack` | Download a **pinned** YouTrack Server ZIP, unpack, launch `bin/youtrack.sh` on a local port, poll readiness, write `artifacts/test-environment-manifest.json`. |
+| `seed-youtrack.mjs` | `seed:youtrack` | Create an isolated project/board/fields/users via REST, namespaced by run id. |
+| `cleanup-youtrack.mjs` | `cleanup:youtrack` | Delete seeded entities, stop the process, remove temp dirs; writes `artifacts/orphan-cleanup-report.json`. |
 
 **Environment variables** (copy [`.env.example`](.env.example) → `.env`, git-ignored):
 
@@ -71,7 +71,7 @@ Drives the live REST API of a **local, disposable** YouTrack Server — **no Doc
 
 ```bash
 cp .env.example .env    # fill in a LOCAL instance + YT_TEST_ALLOW_DESTRUCTIVE=true
-npm run test:integration:real
+npm run test:integration
 ```
 
 > Several endpoints here (extension-property read/write, app install, group membership) are `// SPIKE` and mirror the SPIKEs in [`youtrack-http-client.ts`](src/backend/repositories/youtrack-http-client.ts).
@@ -132,7 +132,7 @@ npm run test:e2e:analyze
 
 - **`build-and-test`** (every push/PR): `npm ci → lint → typecheck:all → test:unit → test:contract → build → pack`, then uploads `dist/sprint-capacity-planner.zip`.
 - **`security-and-review`**: placeholder steps for the security / code-review plugins.
-- **`real-youtrack`** (manual dispatch, opt-in, protected environment, `continue-on-error`): installs Playwright + ffmpeg, builds/packs, provisions the local no-Docker instance, runs integration + E2E (critical & regression), analyses UI artifacts, tears down, and uploads all reports.
+- **`youtrack`** (manual dispatch, opt-in, protected environment, `continue-on-error`): installs Playwright + ffmpeg, builds/packs, provisions the local no-Docker instance, runs integration + E2E (critical & regression), analyses UI artifacts, tears down, and uploads all reports.
 
 ## Self-contained demo E2E suite (runs anywhere)
 
@@ -168,7 +168,7 @@ these are plain web tests that need no AI to run. Chromium runs **headless** (no
 focus) in an **isolated context per test** that closes at the end. Artifacts + `ui-analysis.md`
 (with an APPROVE / FIX REQUIRED verdict) land under `artifacts/demo/`.
 
-> **Platform note:** the live-YouTrack path (`test:integration:real`) needs Linux x64 — the
+> **Platform note:** the live-YouTrack path (`test:integration`) needs Linux x64 — the
 > standalone YouTrack 2025.1 build bundles GraalVM/Truffle 22, whose scripting engine cannot
 > start on Apple-Silicon macOS (see CHANGELOG → Platform notes). The demo suite above covers
 > the plugin UI end-to-end everywhere.

@@ -4,17 +4,12 @@ import {
   observedFocusFactor,
   bootstrapFocusFactor,
   nextFocusFactor,
+  DEFAULT_FOCUS_FACTOR,
   type CalibrationInput,
 } from '../../src/domain/focus-factor/focus-factor.js';
 import type { FocusFactorSettings } from '../../src/shared/types.js';
 
-const settings: FocusFactorSettings = {
-  bootstrapFocusFactor: 0.7,
-  learningRate: 0.2,
-  maxFactorStep: 0.03,
-  minFocusFactor: 0.1,
-  maxFocusFactor: 1,
-};
+const settings: FocusFactorSettings = { learningRate: 0.2 };
 
 function input(overrides: Partial<CalibrationInput> = {}): CalibrationInput {
   return { previousFactor: 0.75, observed: 0.65, carryForward: false, ...overrides };
@@ -53,55 +48,43 @@ describe('observedFocusFactor', () => {
 });
 
 describe('bootstrapFocusFactor', () => {
-  it('returns the configured bootstrap value with source bootstrap', () => {
-    expect(bootstrapFocusFactor(settings)).toEqual({ value: 0.7, source: 'bootstrap' });
+  it('returns the fixed default value with source bootstrap', () => {
+    expect(bootstrapFocusFactor()).toEqual({ value: DEFAULT_FOCUS_FACTOR, source: 'bootstrap' });
+    expect(DEFAULT_FOCUS_FACTOR).toBe(0.75);
   });
 });
 
 describe('nextFocusFactor', () => {
-  it('applies the normal adjustment (worked example: P=0.75, O=0.65, a=0.20, M=0.03 -> 0.73)', () => {
+  it('moves learningRate of the way toward the observation (P=0.75, O=0.65, a=0.20 -> 0.73)', () => {
     const r = nextFocusFactor(input({ previousFactor: 0.75, observed: 0.65 }), settings);
     expect(r.source).toBe('calculated');
+    // 0.75 + 0.2*(0.65-0.75) = 0.73
     expect(r.value).toBeCloseTo(0.73, 10);
   });
 
-  it('clamps a large positive step to +maxFactorStep', () => {
-    // O well above P -> raw adjustment far exceeds +M; result is P + M.
+  it('moves upward toward a higher observation', () => {
+    // 0.5 + 0.2*(1-0.5) = 0.6
     const r = nextFocusFactor(input({ previousFactor: 0.5, observed: 1 }), settings);
     expect(r.source).toBe('calculated');
-    expect(r.value).toBeCloseTo(0.53, 10);
+    expect(r.value).toBeCloseTo(0.6, 10);
   });
 
-  it('clamps a large negative step to -maxFactorStep', () => {
+  it('moves downward toward a lower observation', () => {
+    // 0.9 + 0.2*(0.1-0.9) = 0.74
     const r = nextFocusFactor(input({ previousFactor: 0.9, observed: 0.1 }), settings);
-    expect(r.value).toBeCloseTo(0.87, 10);
+    expect(r.value).toBeCloseTo(0.74, 10);
   });
 
-  it('clamps the result to the configured minimum', () => {
-    const s: FocusFactorSettings = { ...settings, minFocusFactor: 0.6, maxFactorStep: 0.03 };
-    // P below min; a small upward step still lands below min -> clamp up to 0.6.
-    const r = nextFocusFactor(input({ previousFactor: 0.5, observed: 0.1 }), s);
-    expect(r.value).toBe(0.6);
+  it('clamps the observation into [0,1] before stepping', () => {
+    // observed 5 is clamped to 1; 0.7 + 1*(1-0.7) = 1.0 (learningRate 1)
+    const r = nextFocusFactor(input({ previousFactor: 0.7, observed: 5 }), { learningRate: 1 });
+    expect(r.value).toBe(1);
   });
 
-  it('clamps the result to the configured maximum', () => {
-    const s: FocusFactorSettings = {
-      ...settings,
-      maxFocusFactor: 0.8,
-      maxFactorStep: 0.05,
-      learningRate: 10,
-    };
-    // Pre-clamp value 0.79 + 0.05 = 0.84 overshoots max -> clamp down to 0.8.
-    const r = nextFocusFactor(input({ previousFactor: 0.79, observed: 0.8 }), s);
-    expect(r.value).toBe(0.8);
-  });
-
-  it('bounds the observation before computing the step', () => {
-    // observed above max is first clamped to max (1) before the learning step.
-    const s: FocusFactorSettings = { ...settings, maxFocusFactor: 0.8, maxFactorStep: 1, learningRate: 1 };
-    const r = nextFocusFactor(input({ previousFactor: 0.7, observed: 5 }), s);
-    // boundedObservation = 0.8; adjustment = 1*(0.8-0.7)=0.1; value = clamp(0.8, .1, .8) = 0.8
-    expect(r.value).toBe(0.8);
+  it('clamps the result into [0,1]', () => {
+    // A huge learning rate cannot push the factor above 1.
+    const r = nextFocusFactor(input({ previousFactor: 0.9, observed: 1 }), { learningRate: 10 });
+    expect(r.value).toBe(1);
   });
 
   it('carries the previous factor forward when carryForward is set', () => {
@@ -114,7 +97,7 @@ describe('nextFocusFactor', () => {
     expect(r).toEqual({ value: 0.72, source: 'carried-forward' });
   });
 
-  it('respects bounds even when carrying forward', () => {
+  it('clamps a carried-forward factor into [0,1]', () => {
     const r = nextFocusFactor(input({ previousFactor: 5, carryForward: true }), settings);
     expect(r).toEqual({ value: 1, source: 'carried-forward' });
   });

@@ -108,7 +108,7 @@ describe('POST /sprints/create-next', () => {
     expect((res.body as ApiError).code).toBe('BOARD_PERMISSION_REQUIRED');
   });
 
-  it('creates the first sprint with bootstrap focus factor and firstSprintStart dates', async () => {
+  it('creates the first sprint starting today with the default bootstrap focus factor', async () => {
     const fake = seedWorld();
     fake.currentUserId = MANAGER.id;
     fake.grantBoardPermission(BOARD_ID, MANAGER.id);
@@ -118,9 +118,11 @@ describe('POST /sprints/create-next', () => {
     expect(res.status).toBe(200);
     const view = res.body as SprintView;
     expect(view.sequence).toBe(1);
-    expect(view.start).toBe('2026-01-05');
-    expect(view.finish).toBe('2026-01-18');
-    expect(view.focusFactor).toBe(0.7);
+    // The first Sprint of a new team starts on "today" (the fixed clock = 2026-06-01)
+    // and runs for the configured 14 days.
+    expect(view.start).toBe('2026-06-01');
+    expect(view.finish).toBe('2026-06-14');
+    expect(view.focusFactor).toBe(0.75);
     expect(view.focusFactorSource).toBe('bootstrap');
     // Capacity seeded for enabled participants only, available == default.
     expect(Object.keys(view.capacity.rows).sort()).toEqual([MEMBER.id, MEMBER_2.id]);

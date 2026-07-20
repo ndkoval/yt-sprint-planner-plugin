@@ -17,18 +17,31 @@
       "name": "Sprint Capacity",
       "indexPath": "widgets/project-tab/index.html",
       "extensionPoint": "PROJECT_SETTINGS",
-      "description": "Sprint capacity planning tab for a project."
+      "description": "Sprint capacity planning for a project — planning plus manager configuration in one place."
     },
     {
-      "key": "sprint-capacity-settings",
-      "name": "Sprint Capacity Settings",
-      "indexPath": "widgets/project-settings/index.html",
-      "extensionPoint": "PROJECT_SETTINGS",
-      "description": "Configuration for the Sprint Capacity Planner."
+      "key": "sprint-capacity-issue",
+      "name": "Sprint Planner",
+      "indexPath": "widgets/issue-planner/index.html",
+      "extensionPoint": "ISSUE_OPTIONS_MENU_ITEM",
+      "description": "Open the Sprint Capacity Planner for this issue's project (e.g. from a board card)."
+    },
+    {
+      "key": "sprint-capacity-dashboard",
+      "name": "Sprint Planner",
+      "indexPath": "widgets/dashboard-planner/index.html",
+      "extensionPoint": "DASHBOARD_WIDGET",
+      "description": "Sprint Capacity Planner widget for dashboards and the project overview."
     }
   ],
   "backend": {
     "entryPoint": "backend.js"
   },
-  "scopes": ["Agile.Read", "Agile.Update", "Issue.Read", "Project.Read"]
+  "scopes": [
+    "Agile.Read",
+    "Agile.Update",
+    "Issue.Read",
+    "Issue.Update",
+    "Project.Read"
+  ]
 }

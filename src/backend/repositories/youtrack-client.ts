@@ -35,6 +35,10 @@ export interface YtSprint {
 
 export interface YtIssue {
   id: string;
+  /** Human-readable id, e.g. "AGP-42" (may be absent on older shapes). */
+  idReadable?: string | undefined;
+  /** Issue summary/title (may be absent when not requested). */
+  summary?: string | undefined;
   /** Value of the configured Original Effort period field, in minutes, or null. */
   originalEffortMinutes: number | null;
   /** Value of the configured Current Effort period field, in minutes, or null. */
@@ -44,6 +48,8 @@ export interface YtIssue {
   resolvedAt: number | null;
   /** Stable user id of the assignee, or null/absent when the task is unassigned. */
   assigneeId?: string | null | undefined;
+  /** Display name of the assignee, or null/absent when unassigned. */
+  assigneeName?: string | null | undefined;
 }
 
 export interface YtCustomField {
@@ -80,6 +86,8 @@ export interface YouTrackClient {
   getCurrentUser(): Promise<YtUser>;
   /** Resolve users by id (for capacity-row snapshots). */
   getUsers(userIds: readonly string[]): Promise<YtUser[]>;
+  /** Search users by login/name/email prefix (for participant/assignee pickers). */
+  searchUsers(query: string, limit?: number): Promise<YtUser[]>;
   /** Whether the caller belongs to the named group (manager check). */
   isUserInGroup(userId: string, groupName: string): Promise<boolean>;
 
@@ -111,6 +119,29 @@ export interface YouTrackClient {
 
   /** Move unresolved issues from one sprint to another (create-next option). */
   moveUnresolvedIssues(boardId: string, fromSprintId: string, toSprintId: string): Promise<void>;
+
+  /**
+   * Issues matching a YouTrack search query (the configured backlog search). The two
+   * configured effort fields are resolved to minutes. Callers subtract the ones already in
+   * the Sprint to produce the backlog.
+   */
+  searchIssues(
+    query: string,
+    originalEffortField: string,
+    currentEffortField: string,
+    limit?: number,
+  ): Promise<YtIssue[]>;
+
+  /** Add an issue to a Sprint (pull from backlog into the Sprint). Idempotent. */
+  addIssueToSprint(boardId: string, sprintId: string, issueId: string): Promise<void>;
+  /** Remove an issue from a Sprint (send back to the backlog). Idempotent. */
+  removeIssueFromSprint(boardId: string, sprintId: string, issueId: string): Promise<void>;
+
+  /**
+   * Set (or clear) an issue's Assignee. `assigneeId` null unassigns. Requires the app's
+   * Issue.Update scope; the caller's manager permission is enforced server-side first.
+   */
+  setIssueAssignee(issueId: string, assigneeId: string | null): Promise<void>;
 
   /** Read an app extension property from an entity. Returns null if unset. */
   getExtensionProperty(

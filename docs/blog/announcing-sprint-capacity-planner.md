@@ -30,21 +30,19 @@ The native Sprint stays the single source of truth. There are **no** service iss
 
 ## See it in action
 
-Two short, subtitled screen recordings ship with the project (recorded automatically by the test suite, with a visible cursor and human pacing):
+Two short, subtitled screen recordings ship with the project — both recorded **inside a YouTrack instance** (the app installed as widgets, the native Kanban board), with a visible cursor and human pacing, against a fixed prepared data set:
 
 | Reel | What it shows | Video | Subtitles |
 | --- | --- | --- | --- |
-| **Product walkthrough** | The whole story: overview → create next Sprint → confirm availability → remaining capacity updates automatically → open the board | `artifacts/demo/test-results/00-product-walkthrough-*/video.webm` | `artifacts/demo/subtitles/01-product-walkthrough.vtt` |
-| **Team capacity** | The collaborative availability workflow: the whole team sets and confirms availability and the numbers fill up live | `artifacts/demo/test-results/00b-team-capacity-*/video.webm` | `artifacts/demo/subtitles/02-team-capacity.vtt` |
+| **Install & configure** | Installing the app from one ZIP, then setting it up in the single Sprint Capacity tab — board, effort-field pickers, the backlog search, the focus-factor explanation, and the team with part-time allocations | `artifacts/demo/test-results/01-setup-*/video.webm` | `artifacts/demo/subtitles/01-setup.vtt` |
+| **App walkthrough** | The whole app: per-person capacity (incl. part-time), the drag-and-drop planning board (pull from the backlog, move back, leave work unassigned, double-click to open an issue), over-capacity highlighting, one-click next Sprint, and the native board | `artifacts/demo/test-results/02-walkthrough-*/video.webm` | `artifacts/demo/subtitles/02-walkthrough.vtt` |
 
-Regenerate them anytime — running the demo tests *is* how the demos are produced:
+Regenerate them anytime — running the demo suite against a YouTrack *is* how the demos are produced:
 
 ```bash
-npm run test:e2e:demo          # builds widgets, records all journeys, writes ui-analysis.md
+npm run demo          # provisions a YouTrack, records all reels, renders + QAs the videos
 npx playwright show-report artifacts/demo/playwright-report   # watch the videos + traces
 ```
-
-Both reels are **deterministic** — an in‑memory YouTrack is reset to the same seed before every run — so they look identical every time and need no manual steps to record.
 
 ## Try it
 
@@ -53,6 +51,6 @@ npm ci
 npm run build && npm run pack   # → dist/sprint-capacity-planner.zip
 ```
 
-Install the ZIP in YouTrack, attach it to a project, open **Sprint Capacity Settings** to pick your board and effort fields, and click **Create next Sprint**. That’s the whole setup.
+Install the ZIP in YouTrack, attach it to a project, open the **Sprint Capacity** tab and hit **Settings** to pick your board and effort fields, then plan on the board and click **Create next Sprint**. That’s the whole setup.
 
 *Sprint Capacity Planner — plan with confidence, no busywork.*

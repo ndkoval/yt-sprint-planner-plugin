@@ -14,13 +14,7 @@ import type { SprintRecord, SprintRepository } from '../repositories/sprint-repo
 import { isCompleted } from './reconciliation-service.js';
 
 function settingsFrom(config: FocusFactorSettings): FocusFactorSettings {
-  return {
-    bootstrapFocusFactor: config.bootstrapFocusFactor,
-    learningRate: config.learningRate,
-    maxFactorStep: config.maxFactorStep,
-    minFocusFactor: config.minFocusFactor,
-    maxFocusFactor: config.maxFocusFactor,
-  };
+  return { learningRate: config.learningRate };
 }
 
 /**
@@ -55,7 +49,7 @@ export function computeNextFocusFactor(
 ): FocusFactorResult {
   const source = selectCalibrationSource(managed, nowMs);
   if (!source) {
-    return bootstrapFocusFactor(settingsFrom(settings));
+    return bootstrapFocusFactor();
   }
   // Skip conditions (§11.4): carry forward when Original Effort is 0 (can't observe).
   const carryForward =

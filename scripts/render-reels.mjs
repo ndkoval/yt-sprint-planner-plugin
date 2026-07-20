@@ -13,13 +13,13 @@
 import { mkdir, readFile, readdir, rm, access, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import path from 'node:path';
 import { runMain } from './lib/log.mjs';
 import { ARTIFACTS_DIR } from './lib/paths.mjs';
 
-// Base artifacts dir is overridable so this renders both the mock demo suite and the
-// real-YouTrack demo suite (REELS_BASE=real-demo). Reel list is overridable via REELS_JSON.
+// The reels are recorded against a YouTrack instance (tests/e2e/demo). The base
+// artifacts dir is overridable (REELS_BASE); the reel list is overridable via REELS_JSON.
 const DEMO_DIR = path.join(ARTIFACTS_DIR, process.env.REELS_BASE ?? 'demo');
 const RESULTS_DIR = path.join(DEMO_DIR, 'test-results');
 const SUBTITLES_DIR = path.join(DEMO_DIR, 'subtitles');
@@ -34,26 +34,25 @@ const VOICE_ARGS = [
   '-r', process.env.SCP_SAY_RATE ?? '175',
 ];
 
-// vtt name (without extension) -> substring of the Playwright test-results dir for the video.
-const MOCK_REELS = [
-  { vtt: '01-product-walkthrough', dir: '00-product-walkthrough', title: 'Product walkthrough' },
-  { vtt: '02-team-capacity', dir: '00b-team-capacity', title: 'Team capacity' },
-  { vtt: '03-team-configuration', dir: '00c-team-configuration', title: 'Team configuration' },
-  { vtt: '04-installation', dir: '00d-installation', title: 'Installation' },
-  { vtt: '05-per-person-planning', dir: '09-assignment', title: 'Per-person planning' },
+// Preferred voice: Piper (a local, offline NEURAL TTS) — far more natural and engaging than
+// macOS `say`. If the Piper binary + a voice model are present we use it; otherwise we fall
+// back to `say`. Install: python -m venv ~/.piper-venv && ~/.piper-venv/bin/pip install
+// piper-tts, then download a voice (e.g. en_US-amy-medium) into ~/.local/share/piper-voices.
+// The amy voice's default pace (~2.5 words/sec) matches helpers.ts estNarrationMs, so the
+// caption timing and the spoken audio stay aligned. Override with SCP_PIPER_BIN/SCP_PIPER_MODEL.
+const PIPER_BIN =
+  process.env.SCP_PIPER_BIN ?? path.join(homedir(), '.piper-venv', 'bin', 'piper');
+const PIPER_MODEL =
+  process.env.SCP_PIPER_MODEL ??
+  path.join(homedir(), '.local', 'share', 'piper-voices', 'en_US-amy-medium.onnx');
+
+// Real-YouTrack reels (recorded against a live instance). vtt name (without extension) ->
+// substring of the Playwright test-results dir for the video.
+const DEFAULT_REELS = [
+  { vtt: '01-setup', dir: '01-setup', title: 'Install & configure' },
+  { vtt: '02-walkthrough', dir: '02-walkthrough', title: 'App walkthrough' },
 ];
-// Real-YouTrack reels (recorded against a live instance).
-const REAL_REELS = [
-  { vtt: '01-real-walkthrough', dir: '00-walkthrough', title: 'Product walkthrough (real YouTrack)' },
-  { vtt: '02-real-team-capacity', dir: '01-team-capacity', title: 'Team capacity (real YouTrack)' },
-  { vtt: '03-real-settings', dir: '02-settings', title: 'Configuration (real YouTrack)' },
-  { vtt: '04-real-board', dir: '03-board', title: 'Native board (real YouTrack)' },
-];
-const REELS = process.env.REELS_JSON
-  ? JSON.parse(process.env.REELS_JSON)
-  : process.env.REELS_BASE === 'real-demo'
-    ? REAL_REELS
-    : MOCK_REELS;
+const REELS = process.env.REELS_JSON ? JSON.parse(process.env.REELS_JSON) : DEFAULT_REELS;
 
 function have(bin, arg = '-version') {
   return spawnSync(bin, [arg], { stdio: 'ignore' }).status === 0;
@@ -105,16 +104,34 @@ function ffprobeDurationSec(file) {
 }
 
 runMain('render-reels', async (log) => {
+  const usePiper = (await exists(PIPER_BIN)) && (await exists(PIPER_MODEL));
   const hasSay = have('say', '-v?') || process.platform === 'darwin';
+  const hasVoice = usePiper || hasSay;
   const hasFfmpeg = have('ffmpeg');
   const hasFfprobe = have('ffprobe');
-  if (!hasSay || !hasFfmpeg || !hasFfprobe) {
+  if (!hasVoice || !hasFfmpeg || !hasFfprobe) {
     log.warn(
-      `voiceover skipped (say=${hasSay} ffmpeg=${hasFfmpeg} ffprobe=${hasFfprobe}). ` +
+      `voiceover skipped (piper=${usePiper} say=${hasSay} ffmpeg=${hasFfmpeg} ffprobe=${hasFfprobe}). ` +
         'The webm reels + WebVTT subtitles are still produced.',
     );
     return;
   }
+  log.info(
+    usePiper
+      ? `voice: Piper (neural) — ${path.basename(PIPER_MODEL)}`
+      : `voice: macOS say — ${VOICE_ARGS[1]}`,
+  );
+
+  // Synthesize one cue to an audio file (wav for Piper, aiff for say); returns true on success.
+  const synthCue = (text, out) => {
+    if (usePiper) {
+      return (
+        spawnSync(PIPER_BIN, ['-m', PIPER_MODEL, '-f', out], { input: text, encoding: 'utf8' })
+          .status === 0
+      );
+    }
+    return spawnSync('say', [...VOICE_ARGS, '-o', out, '--', text], { encoding: 'utf8' }).status === 0;
+  };
 
   await mkdir(OUT_DIR, { recursive: true });
   const work = path.join(tmpdir(), 'scp-reels');
@@ -136,19 +153,17 @@ runMain('render-reels', async (log) => {
       continue;
     }
 
-    // 1) Synthesize each cue to an aiff with a calm, pleasant voice (a fixed voice/rate
-    //    so runs are reproducible and the cadence matches helpers.ts estNarrationMs).
+    // 1) Synthesize each cue to a clip with a calm, natural voice (a fixed voice so runs are
+    //    reproducible and the cadence matches helpers.ts estNarrationMs, ~2.5 words/sec).
+    const ext = usePiper ? 'wav' : 'aiff';
     const inputs = [];
     for (let i = 0; i < cues.length; i += 1) {
-      const aiff = path.join(work, `${reel.vtt}-${i}.aiff`);
-      const say = spawnSync('say', [...VOICE_ARGS, '-o', aiff, '--', cues[i].text], {
-        encoding: 'utf8',
-      });
-      if (say.status !== 0 || !(await exists(aiff))) {
-        log.warn(`say failed for cue ${i}: ${say.stderr ?? ''}`);
+      const clip = path.join(work, `${reel.vtt}-${i}.${ext}`);
+      if (!synthCue(cues[i].text, clip) || !(await exists(clip))) {
+        log.warn(`voice synth failed for cue ${i}`);
         continue;
       }
-      inputs.push({ file: aiff, startMs: cues[i].startMs, durMs: ffprobeDurationSec(aiff) * 1000 });
+      inputs.push({ file: clip, startMs: cues[i].startMs, durMs: ffprobeDurationSec(clip) * 1000 });
     }
     if (inputs.length === 0) continue;
 

@@ -60,3 +60,12 @@ export const excludeCalibrationRequestSchema = z
     reason: z.string().min(1).max(2000),
   })
   .strict();
+
+export const planIssueRequestSchema = z
+  .object({
+    inSprint: z.boolean(),
+    // null unassigns; a non-empty id assigns.
+    assigneeId: z.string().min(1).nullable(),
+  })
+  .strict();
+

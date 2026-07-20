@@ -7,6 +7,7 @@
  * authorization server-side before touching state.
  */
 import {
+  canAssignIssues,
   canChangeCalibration,
   canCreateSprint,
   canEditSettings,
@@ -18,9 +19,13 @@ import {
 import type {
   ConfigResponse,
   ConfigValidationResponse,
+  IssueView,
+  ProjectFieldSummary,
   SprintSummary,
+  UserSummary,
 } from '../shared/api.js';
 import {
+  planIssueRequestSchema,
   capacityRevisionRequestSchema,
   createNextSprintRequestSchema,
   excludeCalibrationRequestSchema,
@@ -200,6 +205,31 @@ export function createApp(deps: AppDeps): Router {
     return ok(boards.map((b) => ({ id: b.id, name: b.name, usesSprints: b.usesSprints })));
   });
 
+  // ---- GET /users?query= -------------------------------------------------------
+  // User search for the settings participant picker and the assignee dropdown. Available
+  // before a config exists (settings first-run), so it does not require project context.
+  router.add('GET', '/users', async (req) => {
+    const projectId = projectIdOf(req);
+    const configRepo = new ConfigRepository(client, projectId);
+    await resolvePrincipal(client, configRepo);
+    const query = req.query.query ?? '';
+    const users = await client.searchUsers(query, 20);
+    const body: UserSummary[] = users.map((u) => ({ id: u.id, login: u.login, name: u.name }));
+    return ok(body);
+  });
+
+  // ---- GET /project-fields -----------------------------------------------------
+  // Custom fields on the project, for the effort-field pickers in settings. Also available
+  // before a config exists.
+  router.add('GET', '/project-fields', async (req) => {
+    const projectId = projectIdOf(req);
+    const configRepo = new ConfigRepository(client, projectId);
+    await resolvePrincipal(client, configRepo);
+    const fields = await client.getProjectCustomFields(projectId);
+    const body: ProjectFieldSummary[] = fields.map((f) => ({ name: f.name, type: f.type }));
+    return ok(body);
+  });
+
   // ---- GET /sprints ------------------------------------------------------------
   router.add('GET', '/sprints', async (req) => {
     const ctx = await requireContext(req);
@@ -250,6 +280,89 @@ export function createApp(deps: AppDeps): Router {
       );
     }
     return ok(toSprintView(record, []));
+  });
+
+  // ---- GET /sprints/:sprintId/issues -------------------------------------------
+  // The Sprint's issues with assignee + effort, for the planner's "plan work" table.
+  router.add('GET', '/sprints/:sprintId/issues', async (req) => {
+    const ctx = await requireContext(req);
+    const sprint = await loadSprintRecord(ctx, req.params.sprintId!);
+    const issues = await client.getSprintIssues(
+      ctx.boardId,
+      sprint.id,
+      ctx.config.originalEffortField,
+      ctx.config.currentEffortField,
+    );
+    const body: IssueView[] = issues.map((i) => ({
+      id: i.id,
+      idReadable: i.idReadable ?? i.id,
+      summary: i.summary ?? '',
+      assigneeId: i.assigneeId ?? null,
+      assigneeName: i.assigneeName ?? null,
+      originalEffortMinutes: i.originalEffortMinutes,
+      currentEffortMinutes: i.currentEffortMinutes,
+      resolved: i.resolved,
+    }));
+    return ok(body);
+  });
+
+  // ---- GET /sprints/:sprintId/backlog ------------------------------------------
+  // The planning backlog: issues matching the configured backlog search that are NOT yet in
+  // this Sprint. Empty backlogQuery → empty backlog (lane hidden).
+  router.add('GET', '/sprints/:sprintId/backlog', async (req) => {
+    const ctx = await requireContext(req);
+    const query = (ctx.config.backlogQuery ?? '').trim();
+    if (query.length === 0) return ok([] as IssueView[]);
+    const sprint = await loadSprintRecord(ctx, req.params.sprintId!);
+    const [candidates, sprintIssues] = await Promise.all([
+      client.searchIssues(query, ctx.config.originalEffortField, ctx.config.currentEffortField),
+      client.getSprintIssues(
+        ctx.boardId,
+        sprint.id,
+        ctx.config.originalEffortField,
+        ctx.config.currentEffortField,
+      ),
+    ]);
+    const inSprint = new Set(sprintIssues.map((i) => i.id));
+    const body: IssueView[] = candidates
+      .filter((i) => !inSprint.has(i.id) && !i.resolved)
+      .map((i) => ({
+        id: i.id,
+        idReadable: i.idReadable ?? i.id,
+        summary: i.summary ?? '',
+        assigneeId: i.assigneeId ?? null,
+        assigneeName: i.assigneeName ?? null,
+        originalEffortMinutes: i.originalEffortMinutes,
+        currentEffortMinutes: i.currentEffortMinutes,
+        resolved: i.resolved,
+      }));
+    return ok(body);
+  });
+
+  // ---- POST /sprints/:sprintId/issues/:issueId/plan ----------------------------
+  // The core planning action (a board drag): pull an issue into the Sprint (or send it back
+  // to the backlog) and set its assignee, in one move. Manager-only; returns the reconciled
+  // SprintView so capacity load/remaining refresh.
+  router.add('POST', '/sprints/:sprintId/issues/:issueId/plan', async (req) => {
+    const ctx = await requireContext(req);
+    if (!canAssignIssues(ctx.principal)) throw forbidden('Only managers can plan issues.');
+    const parsed = planIssueRequestSchema.parse(req.body);
+    const sprint = await loadSprintRecord(ctx, req.params.sprintId!);
+    const issueId = req.params.issueId!;
+    const current = await client.getSprintIssues(
+      ctx.boardId,
+      sprint.id,
+      ctx.config.originalEffortField,
+      ctx.config.currentEffortField,
+    );
+    const alreadyInSprint = current.some((i) => i.id === issueId);
+    if (parsed.inSprint) {
+      if (!alreadyInSprint) await client.addIssueToSprint(ctx.boardId, sprint.id, issueId);
+      await client.setIssueAssignee(issueId, parsed.assigneeId);
+    } else if (alreadyInSprint) {
+      await client.removeIssueFromSprint(ctx.boardId, sprint.id, issueId);
+    }
+    return reconcileAndView(ctx, sprint.id);
   });
 
   // ---- POST /sprints/create-next ----------------------------------------------

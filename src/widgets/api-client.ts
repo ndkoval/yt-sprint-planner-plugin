@@ -25,6 +25,9 @@ import type {
   ApiError,
   ApiErrorCode,
   BoardSummary,
+  IssueView,
+  UserSummary,
+  ProjectFieldSummary,
 } from '../shared/api';
 
 /** RequestInit-like options the bridge understands (a subset of fetch's). */
@@ -50,11 +53,10 @@ export interface HostBridge {
 /**
  * Minimal shape of the YouTrack Apps host object exposed on `window`.
  *
- * SPIKE: confirm host API — the exact global name and method signatures depend on the
- * current YouTrack Apps SDK. On recent SDKs the widget receives a `host` via
- * `await YTApp.register()` exposing `host.fetchApp(relativeUrl, {method, body, query})`
- * and the active project is available from `YTApp.entity` / `host.project`. This is the
- * ONLY place that touches the SDK; verify against a real instance and adjust here.
+ * The widget receives a `host` via `await YTApp.register()` exposing
+ * `host.fetchApp(relativeUrl, {method, body, query})`, and the active project comes from
+ * `YTApp.entity`. This is the ONLY place that touches the SDK. Confirmed working on
+ * YouTrack 2025.3 (the installed widgets drive the backend through this path end to end).
  */
 interface YouTrackHost {
   fetchApp(
@@ -65,8 +67,10 @@ interface YouTrackHost {
 
 interface YTAppGlobal {
   register?(): Promise<YouTrackHost>;
-  entity?: { id?: string };
-  locationId?: string;
+  // In a project context `entity` is the project; in an issue context it is the issue,
+  // which carries its `project`. We accept either so the planner works from the project
+  // settings tab, an issue action, or a dashboard/project-overview widget.
+  entity?: { id?: string; project?: { id?: string } };
   me?: { id?: string };
 }
 
@@ -120,7 +124,7 @@ export class WindowHostBridge implements HostBridge {
     if (this.hostPromise === null) {
       this.hostPromise = (async () => {
         const w = window as AppWindow;
-        // SPIKE: confirm host API — registration handshake with the SDK.
+        // Register with the host to obtain the app-scoped `host` (confirmed on 2025.3).
         if (w.YTApp?.register) {
           try {
             return await w.YTApp.register();
@@ -136,8 +140,15 @@ export class WindowHostBridge implements HostBridge {
 
   async resolveProjectId(): Promise<string> {
     const w = window as AppWindow;
-    // SPIKE: confirm host API — the active project id source.
-    const fromEntity = w.YTApp?.entity?.id ?? w.YTApp?.locationId;
+    // Resolve the project the widget is scoped to. In an issue context (issue-planner)
+    // YTApp.entity is the issue, which carries its project (entity.project.id); in a project
+    // context (project tab / settings) YTApp.entity is the project itself (entity.id). A
+    // dashboard/standalone context without an entity falls back to an explicit ?projectId.
+    // The planner is project-scoped, so a context with none surfaces a clear error the widget
+    // renders as a message.
+    const fromProject = w.YTApp?.entity?.project?.id;
+    if (typeof fromProject === 'string' && fromProject.length > 0) return fromProject;
+    const fromEntity = w.YTApp?.entity?.id;
     if (typeof fromEntity === 'string' && fromEntity.length > 0) return fromEntity;
     const fromQuery = new URLSearchParams(window.location.search).get('projectId');
     if (fromQuery !== null && fromQuery.length > 0) return fromQuery;
@@ -146,7 +157,7 @@ export class WindowHostBridge implements HostBridge {
 
   async resolveUserId(): Promise<string | null> {
     const w = window as AppWindow;
-    // SPIKE: confirm host API — the current viewer id source.
+    // The current viewer, exposed by the host on YTApp.me.
     const id = w.YTApp?.me?.id;
     return typeof id === 'string' && id.length > 0 ? id : null;
   }
@@ -237,6 +248,16 @@ export class ApiClient {
     return this.request<BoardSummary[]>('GET', '/boards');
   }
 
+  /** Search users for the participant / assignee pickers. */
+  searchUsers(query: string): Promise<UserSummary[]> {
+    return this.request<UserSummary[]>('GET', `/users?query=${encodeURIComponent(query)}`);
+  }
+
+  /** Project custom fields for the effort-field pickers. */
+  getProjectFields(): Promise<ProjectFieldSummary[]> {
+    return this.request<ProjectFieldSummary[]>('GET', '/project-fields');
+  }
+
   // --- Sprints -------------------------------------------------------------
 
   listSprints(): Promise<SprintSummary[]> {
@@ -249,6 +270,32 @@ export class ApiClient {
 
   createNextSprint(body: CreateNextSprintRequest): Promise<SprintView> {
     return this.request<SprintView>('POST', '/sprints/create-next', body);
+  }
+
+  /** The Sprint's issues (with assignee + effort) for the planning board. */
+  listSprintIssues(sprintId: string): Promise<IssueView[]> {
+    return this.request<IssueView[]>('GET', `/sprints/${encodeURIComponent(sprintId)}/issues`);
+  }
+
+  /** The backlog pool (configured search, minus issues already in the Sprint). */
+  listBacklog(sprintId: string): Promise<IssueView[]> {
+    return this.request<IssueView[]>('GET', `/sprints/${encodeURIComponent(sprintId)}/backlog`);
+  }
+
+  /**
+   * Plan an issue (a board drag): pull it into/out of the Sprint and set its assignee in one
+   * action. Returns the reconciled SprintView so capacity load/remaining refresh.
+   */
+  planIssue(
+    sprintId: string,
+    issueId: string,
+    body: { inSprint: boolean; assigneeId: string | null },
+  ): Promise<SprintView> {
+    return this.request<SprintView>(
+      'POST',
+      `/sprints/${encodeURIComponent(sprintId)}/issues/${encodeURIComponent(issueId)}/plan`,
+      body,
+    );
   }
 
   patchSprintDetails(sprintId: string, body: PatchSprintDetailsRequest): Promise<SprintView> {

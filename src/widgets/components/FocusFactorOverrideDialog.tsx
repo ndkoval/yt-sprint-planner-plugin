@@ -8,19 +8,18 @@ import { formatPercent } from './format';
 export interface FocusFactorOverrideDialogProps {
   show: boolean;
   currentValue: number;
-  minFocusFactor: number;
-  maxFocusFactor: number;
   saving?: boolean;
   onCancel(): void;
   onSubmit(request: OverrideFocusFactorRequest): void;
 }
 
-/** Manager-only dialog to manually override a Sprint's Focus Factor (§ focus factor). */
+/**
+ * Manager-only dialog to manually override a Sprint's Focus Factor (§ focus factor).
+ * A factor is a fraction of capacity, so any value in 0–100% is allowed.
+ */
 export function FocusFactorOverrideDialog({
   show,
   currentValue,
-  minFocusFactor,
-  maxFocusFactor,
   saving = false,
   onCancel,
   onSubmit,
@@ -30,12 +29,9 @@ export function FocusFactorOverrideDialog({
 
   const percent = Number(percentText);
   const value = percent / 100;
-  const outOfRange =
-    !Number.isFinite(percent) || value < minFocusFactor || value > maxFocusFactor;
+  const outOfRange = !Number.isFinite(percent) || value < 0 || value > 1;
   const reasonMissing = reason.trim().length === 0;
-  const rangeError = outOfRange
-    ? `Enter a value between ${formatPercent(minFocusFactor)} and ${formatPercent(maxFocusFactor)}.`
-    : null;
+  const rangeError = outOfRange ? 'Enter a value between 0% and 100%.' : null;
 
   const handleSubmit = (): void => {
     if (outOfRange || reasonMissing) return;
@@ -62,8 +58,8 @@ export function FocusFactorOverrideDialog({
           <Input
             label="New focus factor (%)"
             type="number"
-            min={Math.round(minFocusFactor * 100)}
-            max={Math.round(maxFocusFactor * 100)}
+            min={0}
+            max={100}
             size={InputSize.M}
             value={percentText}
             error={rangeError}

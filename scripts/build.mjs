@@ -7,16 +7,17 @@
  *   dist/manifest.json
  *   dist/entity-extensions.json
  *   dist/settings.json
- *   dist/backend/index.js
+ *   dist/backend.js
  *   dist/widgets/<name>/index.{js,html}
- *   dist/workflows/*.js        (see SPIKE below)
+ *   dist/*.js                  (workflow rule modules — at the PACKAGE ROOT)
  *   dist/assets/*              (icons referenced by manifest, if present)
  *
- * SPIKE: workflow file placement. The manifest does not declare an explicit
- * workflows path, and the Apps SDK auto-discovers workflow rule modules bundled in
- * the app package. We keep them together under dist/workflows/ so the relative
- * `require('./workflow-common.js')` between modules keeps working. If a real
- * instance expects them at the package root instead, change WORKFLOWS_DEST only.
+ * Workflow file placement: the manifest declares no explicit workflows path, so YouTrack
+ * auto-discovers workflow rule modules as TOP-LEVEL package scripts. They must sit at the
+ * package root (alongside backend.js), NOT in a dist/workflows/ subfolder (modules in a
+ * subfolder are never registered as rules on 2025.3). They stay co-located at the root, so the
+ * relative `require('./workflow-common.js')` between them still resolves; no name collision
+ * with backend.js (workflow-*.js).
  */
 import { spawnSync } from 'node:child_process';
 import { mkdir, copyFile, readdir, access } from 'node:fs/promises';
@@ -25,7 +26,8 @@ import path from 'node:path';
 import { runMain } from './lib/log.mjs';
 import { REPO_ROOT, DIST_DIR, fromRoot } from './lib/paths.mjs';
 
-const WORKFLOWS_DEST = path.join(DIST_DIR, 'workflows');
+// Workflow rule modules go at the package ROOT so YouTrack discovers them as top-level scripts.
+const WORKFLOWS_DEST = DIST_DIR;
 
 async function exists(p) {
   try {
@@ -72,14 +74,15 @@ async function copyWorkflows(log) {
       n += 1;
     }
   }
-  log.info(`copied ${n} workflow module(s) -> dist/workflows/`);
+  log.info(`copied ${n} workflow module(s) -> dist/ (package root)`);
 }
 
 async function copyAssets(log) {
   const assetsSrc = fromRoot('assets');
   if (!(await exists(assetsSrc))) {
-    // SPIKE: manifest references assets/icon.svg + assets/icon-dark.svg. If the
-    // assets dir is not authored yet the app will have no icon; not fatal for build.
+    // The manifest references assets/icon.svg + assets/icon-dark.svg (copied below). Verified
+    // on 2025.3: the installed app resolves the icon. If the dir is absent the app just ships
+    // without an icon — not fatal for the build.
     log.warn('assets/ missing — manifest icon(s) will be absent from the package');
     return;
   }

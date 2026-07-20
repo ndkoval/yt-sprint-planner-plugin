@@ -13,6 +13,7 @@ import {
   nextSequence,
   nextSprintDates,
   renderSprintName,
+  utcMsToIso,
 } from '../../domain/index.js';
 import type { ProjectConfig } from '../../shared/types.js';
 import type { Clock } from '../clock.js';
@@ -67,10 +68,11 @@ export class SprintService {
     }
     const managedAfter = await this.repo.loadAllManaged(projectId);
 
-    // 7. Next dates.
+    // 7. Next dates. The first Sprint of a brand-new team starts today (there is no longer
+    // a configured first-start date); subsequent Sprints continue from the previous finish.
     const dates = previous?.native.finish
       ? nextSprintDates(previous.native.finish, config.sprintLengthDays)
-      : firstSprintDates(config.firstSprintStart, config.sprintLengthDays);
+      : firstSprintDates(utcMsToIso(this.clock.now()), config.sprintLengthDays);
 
     // 8–9. Sequence + name.
     const sequence = nextSequence(managedAfter.map((r) => r.sequence));

@@ -1,7 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Skill(code-review)"
+      "Skill(code-review)",
+      "mcp__plugin_playwright_playwright__browser_type",
+      "mcp__plugin_playwright_playwright__browser_click",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__plugin_playwright_playwright__browser_evaluate",
+      "mcp__plugin_playwright_playwright__browser_snapshot",
+      "mcp__plugin_context7_context7__resolve-library-id",
+      "mcp__plugin_context7_context7__query-docs",
+      "mcp__plugin_playwright_playwright__browser_press_key"
     ]
   }
 }

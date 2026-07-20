@@ -1,14 +1,12 @@
-# CI pipeline for the Sprint Capacity Planner YouTrack app (§30).
+# CI for the Sprint Capacity Planner YouTrack app.
 #
-# Fast lane (always on PRs/pushes): install -> lint -> typecheck:all -> unit ->
-# contract -> build -> pack, then publish the app package as an artifact.
-#
-# real-youtrack lane (opt-in): provisions a LOCAL YouTrack Server WITHOUT Docker
-# (download + bin/youtrack.sh), installs the app, runs the integration + workflow
-# tests, Playwright critical + regression, analyses UI artifacts, then publishes.
-# It is gated behind a protected environment + the YT_TEST_ALLOW_DESTRUCTIVE flag and
-# marked continue-on-error / manual because the distribution download is
-# environment-specific (offline runners cannot fetch it).
+#  build-and-test  (every push/PR): install → lint → typecheck → unit → contract → build →
+#                   pack, then publish the app ZIP as an artifact.
+#  demos           (push to main + manual): bring up a REAL YouTrack in Docker, install +
+#                   seed the app, and RECORD the two demo reels headed under a virtual display
+#                   (Xvfb) inside the Playwright Docker image. Real YouTrack only — never a
+#                   stub (project rule). Reels + report are uploaded as artifacts.
+#  security-review (every push/PR): placeholder hooks for the security/code-review tooling.
 name: CI
 
 on:
@@ -17,10 +15,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      run_real_youtrack:
-        description: 'Run the real-YouTrack (local, no-Docker) lane'
+      record_demos:
+        description: 'Record the demo reels (real YouTrack in Docker)'
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
@@ -58,13 +56,22 @@ jobs:
           path: dist/sprint-capacity-planner.zip
           retention-days: 30
 
-  # Demo reels: run the self-contained Playwright demo suite (real widgets + real
-  # backend + in-memory YouTrack). Recording the videos IS running the tests; the
-  # subtitles, contact sheets, and ui-analysis.md verdict are produced automatically.
+  # Record the reels against a REAL YouTrack (project rule: never a stub). YouTrack runs in
+  # Docker and is configured headlessly; the reels are recorded headed under Xvfb inside the
+  # Playwright Docker image. Heavy (~pulls YouTrack + Playwright images, boots YouTrack), so it
+  # runs on pushes to main and manual dispatch rather than every PR.
   demos:
-    name: Demo reels (Playwright, 720p + subtitles)
+    name: Record demo reels (real YouTrack in Docker)
     runs-on: ubuntu-latest
     needs: build-and-test
+    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.record_demos) }}
+    timeout-minutes: 45
+    env:
+      YT_TEST_BASE_URL: http://localhost:8080
+      YT_TEST_MANAGER_LOGIN: admin
+      YT_TEST_MANAGER_PASSWORD: adminPass123!
+      # setup/seed operate on the disposable CI instance.
+      YT_TEST_ALLOW_DESTRUCTIVE: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -72,22 +79,32 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - name: Install ffmpeg (video analysis)
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - name: Install Chromium for Playwright
-        run: npx playwright install --with-deps chromium
-      - name: Record demo reels + analyse artifacts
-        run: npm run test:e2e:demo
-      - name: Upload demo artifacts (videos, subtitles, contact sheets, ui-analysis)
+      - name: Install ffmpeg + Playwright Chromium
+        # ffmpeg: reel voiceover/analysis on the runner. Chromium: install-app-youtrack uploads
+        # the ZIP through the admin UI (the REST upload rejects multipart), so it needs a browser.
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          npx playwright install --with-deps chromium
+      - name: Start + configure YouTrack (Docker, headless wizard)
+        run: node scripts/ci-youtrack-docker.mjs
+      - name: Build, install app + seed the prepared demo state
+        run: npm run demo:provision
+      - name: Record the two reels (Docker + Xvfb)
+        run: npm run demo:record:docker
+      - name: Upload demo reels + report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: demo-reels
           path: artifacts/demo
           retention-days: 30
+      - name: YouTrack logs (on failure)
+        if: failure()
+        run: docker logs youtrack-ci 2>&1 | tail -200 || true
+      - name: Teardown YouTrack
+        if: always()
+        run: docker rm -f youtrack-ci || true
 
-  # Security scan + automated code review placeholders (§30). Wire to the real
-  # tooling/plugins when available; kept as explicit, non-blocking steps for now.
   security-and-review:
     name: Security + Code Review (placeholders)
     runs-on: ubuntu-latest
@@ -103,90 +120,3 @@ jobs:
         run: echo "SPIKE: wire security scanner / security-review plugin here."
       - name: Automated code review (placeholder)
         run: echo "SPIKE: wire the code-review plugin here."
-
-  real-youtrack:
-    name: Real YouTrack (local, no Docker)
-    runs-on: ubuntu-latest
-    needs: build-and-test
-    # Only on manual dispatch with the opt-in flag; distribution download is
-    # environment-specific, so this lane is allowed to fail without failing CI.
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_real_youtrack }}
-    continue-on-error: true
-    environment: real-youtrack # protected environment gates the secrets below
-    env:
-      YT_TEST_BASE_URL: ${{ secrets.YT_TEST_BASE_URL }}
-      YT_TEST_ADMIN_TOKEN: ${{ secrets.YT_TEST_ADMIN_TOKEN }}
-      YT_TEST_MANAGER_LOGIN: ${{ secrets.YT_TEST_MANAGER_LOGIN }}
-      YT_TEST_MANAGER_PASSWORD: ${{ secrets.YT_TEST_MANAGER_PASSWORD }}
-      YT_TEST_ALICE_LOGIN: ${{ secrets.YT_TEST_ALICE_LOGIN }}
-      YT_TEST_ALICE_PASSWORD: ${{ secrets.YT_TEST_ALICE_PASSWORD }}
-      YT_TEST_BOB_LOGIN: ${{ secrets.YT_TEST_BOB_LOGIN }}
-      YT_TEST_BOB_PASSWORD: ${{ secrets.YT_TEST_BOB_PASSWORD }}
-      YT_TEST_PROJECT_PREFIX: SCP_E2E_CI
-      # Destructive gate — required for provision/seed/cleanup against the disposable
-      # local instance.
-      YT_TEST_ALLOW_DESTRUCTIVE: 'true'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - run: npm ci
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
-      - name: Install ffmpeg (video analysis)
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - name: Build + pack app
-        run: npm run build && npm run pack
-      - name: Provision local YouTrack (no Docker) + install app
-        run: npm run provision:real-youtrack
-      - name: Integration + workflow tests (provision/seed/run/cleanup)
-        run: npm run test:integration:real
-      - name: Playwright — critical journeys
-        run: npm run test:e2e -- --project=setup --project=critical
-      - name: Playwright — regression journeys
-        run: npm run test:e2e -- --project=setup --project=regression
-      - name: Analyse UI artifacts (video integrity + contact sheets)
-        if: always()
-        run: npm run test:e2e:analyze
-      - name: Ensure local instance is torn down
-        if: always()
-        run: npm run cleanup:real-youtrack
-      - name: Publish test summary
-        if: always()
-        run: npm run publish:test-summary
-      - name: Upload Playwright report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: artifacts/playwright-report
-          retention-days: 14
-      - name: Upload test results (videos/traces/screenshots)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: artifacts/test-results
-          retention-days: 14
-      - name: Upload UI analysis
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-analysis
-          path: |
-            artifacts/ui-analysis.md
-            artifacts/contact-sheets
-            tests/video-analysis/video-integrity.json
-          retention-days: 14
-      - name: Upload environment + cleanup reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: environment-reports
-          path: |
-            artifacts/test-environment-manifest.json
-            artifacts/orphan-cleanup-report.json
-            artifacts/index.html
-          retention-days: 14

@@ -26,6 +26,8 @@ export type FaultMethod =
   | 'listBoards'
   | 'listSprints'
   | 'getSprintIssues'
+  | 'searchUsers'
+  | 'setIssueAssignee'
   | 'getExtensionProperties';
 
 export interface SeedSprintOptions {
@@ -61,6 +63,7 @@ export class FakeYouTrack implements YouTrackClient {
   private readonly boards = new Map<string, YtBoard>();
   private readonly sprintsByBoard = new Map<string, YtSprint[]>();
   private readonly issuesBySprint = new Map<string, YtIssue[]>();
+  private backlog: YtIssue[] = [];
   private readonly groups = new Map<string, Set<string>>();
   private readonly boardManagers = new Map<string, Set<string>>();
   private readonly projectFields = new Map<string, YtCustomField[]>();
@@ -186,6 +189,19 @@ export class FakeYouTrack implements YouTrackClient {
     return Promise.resolve(result);
   }
 
+  searchUsers(query: string, limit = 20): Promise<YtUser[]> {
+    this.maybeThrow('searchUsers');
+    const q = query.trim().toLowerCase();
+    const all = [...this.users.values()];
+    const matched =
+      q.length === 0
+        ? all
+        : all.filter(
+            (u) => u.login.toLowerCase().includes(q) || u.name.toLowerCase().includes(q),
+          );
+    return Promise.resolve(matched.slice(0, limit));
+  }
+
   isUserInGroup(userId: string, groupName: string): Promise<boolean> {
     return Promise.resolve(this.groups.get(groupName)?.has(userId) ?? false);
   }
@@ -260,6 +276,53 @@ export class FakeYouTrack implements YouTrackClient {
     this.issuesBySprint.set(fromKey, remaining);
     const toKey = `${boardId}:${toSprintId}`;
     this.issuesBySprint.set(toKey, [...(this.issuesBySprint.get(toKey) ?? []), ...moving]);
+    return Promise.resolve();
+  }
+
+  setIssueAssignee(issueId: string, assigneeId: string | null): Promise<void> {
+    this.maybeThrow('setIssueAssignee');
+    // Find the issue in any sprint bucket (or the backlog) and update its assignee.
+    for (const issues of [...this.issuesBySprint.values(), this.backlog]) {
+      const issue = issues.find((i) => i.id === issueId);
+      if (issue) {
+        issue.assigneeId = assigneeId;
+        issue.assigneeName = assigneeId !== null ? this.users.get(assigneeId)?.name ?? null : null;
+        return Promise.resolve();
+      }
+    }
+    return Promise.resolve();
+  }
+
+  /** Seed the backlog pool (issues searchable via {@link searchIssues}). */
+  seedBacklog(issues: YtIssue[]): this {
+    this.backlog = [...issues];
+    return this;
+  }
+
+  searchIssues(_query: string, _orig: string, _cur: string, limit = 200): Promise<YtIssue[]> {
+    // The fake ignores the query text and returns the seeded backlog pool.
+    return Promise.resolve(this.backlog.slice(0, limit));
+  }
+
+  addIssueToSprint(boardId: string, sprintId: string, issueId: string): Promise<void> {
+    const key = `${boardId}:${sprintId}`;
+    const idx = this.backlog.findIndex((i) => i.id === issueId);
+    const issue = idx >= 0 ? this.backlog.splice(idx, 1)[0]! : { id: issueId, originalEffortMinutes: null, currentEffortMinutes: null, resolved: false, resolvedAt: null };
+    const list = this.issuesBySprint.get(key) ?? [];
+    if (!list.some((i) => i.id === issueId)) list.push(issue);
+    this.issuesBySprint.set(key, list);
+    return Promise.resolve();
+  }
+
+  removeIssueFromSprint(boardId: string, sprintId: string, issueId: string): Promise<void> {
+    const key = `${boardId}:${sprintId}`;
+    const list = this.issuesBySprint.get(key) ?? [];
+    const idx = list.findIndex((i) => i.id === issueId);
+    if (idx >= 0) {
+      const [issue] = list.splice(idx, 1);
+      this.issuesBySprint.set(key, list);
+      if (issue) this.backlog.push(issue);
+    }
     return Promise.resolve();
   }
 

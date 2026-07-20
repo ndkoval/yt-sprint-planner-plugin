@@ -1,10 +1,12 @@
 /**
  * Real {@link YouTrackClient} over the YouTrack REST API.
  *
- * SPIKE: In a deployed app the authenticated connection is provided by the Apps SDK
- * (e.g. `ctx.globalStorage` / an app-scoped HTTP connection with the app's service
- * token). The exact object and its auth are SDK-specific and must be confirmed on a
- * real instance. To keep this unit-testable and decoupled, the client talks to a
+ * Auth: the backend authenticates to its own instance with a service token stored
+ * write-once in AppGlobalStorage (set at provisioning; see backend/index.ts +
+ * configureRuntimeConnection), used as bearer auth on the scripting-api connection.
+ * Confirmed working on YouTrack 2025.3 (both demo reels drive it end to end). This token
+ * bridge is a deliberate stopgap; the token-free path is the Backend JS (entities) API
+ * (tracked follow-up). To keep this unit-testable and decoupled, the client talks to a
  * small {@link RestConnection} interface; the default implementation uses `fetch`
  * against a base URL + token from the environment, which is what the local
  * integration harness (§25) uses. Only the connection wiring changes once the SDK
@@ -26,6 +28,7 @@ import type {
 export interface RestConnection {
   get(path: string, query?: Record<string, string>): Promise<unknown>;
   post(path: string, body: unknown, query?: Record<string, string>): Promise<unknown>;
+  delete(path: string, query?: Record<string, string>): Promise<unknown>;
 }
 
 /**
@@ -114,6 +117,9 @@ export class FetchRestConnection implements RestConnection {
   post(path: string, body: unknown, query?: Record<string, string>): Promise<unknown> {
     return this.request('POST', path, query, body);
   }
+  delete(path: string, query?: Record<string, string>): Promise<unknown> {
+    return this.request('DELETE', path, query);
+  }
 }
 
 /** Build the default connection from environment variables (local/integration use). */
@@ -141,6 +147,7 @@ export class ScriptingApiConnection implements RestConnection {
   private newConn(): {
     getSync(p: string, q: unknown): { isSuccess: boolean; code?: number; status?: number; response?: string };
     postSync(p: string, q: unknown, b?: string): { isSuccess: boolean; code?: number; status?: number; response?: string };
+    deleteSync(p: string, q: unknown): { isSuccess: boolean; code?: number; status?: number; response?: string };
   } {
     // Read the current base URL + token each call (the handler sets them from app settings).
     const c = new this.http.Connection(runtimeBaseUrl);
@@ -179,6 +186,11 @@ export class ScriptingApiConnection implements RestConnection {
     );
     return Promise.resolve(ScriptingApiConnection.parse(res, 'POST', path));
   }
+
+  delete(path: string, query?: Record<string, string>): Promise<unknown> {
+    const res = this.newConn().deleteSync(path, ScriptingApiConnection.toQuery(query));
+    return Promise.resolve(ScriptingApiConnection.parse(res, 'DELETE', path));
+  }
 }
 
 /**
@@ -199,6 +211,44 @@ function pick(obj: unknown, key: string): any {
   return obj && typeof obj === 'object' ? (obj as Record<string, unknown>)[key] : undefined;
 }
 
+// Field selector shared by sprint-issue reads and backlog searches. Verified on YouTrack
+// 2025.3: Assignee is a SingleUserIssueCustomField whose value is a User exposing id (stable
+// user id) and name (display); we read those. Effort fields are periods (minutes/presentation).
+const ISSUE_FIELDS =
+  'id,idReadable,summary,resolved,customFields(name,value(minutes,presentation,id,login,name))';
+
+/** Normalise one raw YouTrack issue into a {@link YtIssue} for the two configured effort fields. */
+function mapYtIssue(i: unknown, originalEffortField: string, currentEffortField: string): YtIssue {
+  const cf = pick(i, 'customFields');
+  const periodMinutes = (name: string): number | null => {
+    if (!Array.isArray(cf)) return null;
+    const f = cf.find((c) => pick(c, 'name') === name);
+    const m = pick(pick(f, 'value'), 'minutes');
+    return typeof m === 'number' ? m : null;
+  };
+  const resolvedMs = pick(i, 'resolved');
+  const assigneeField = Array.isArray(cf)
+    ? cf.find((c) => pick(c, 'name') === 'Assignee')
+    : undefined;
+  const assigneeValue = pick(assigneeField, 'value');
+  const aid = pick(assigneeValue, 'id');
+  const assigneeId = typeof aid === 'string' && aid.length > 0 ? aid : null;
+  const aname = pick(assigneeValue, 'name');
+  const idReadable = pick(i, 'idReadable');
+  const summary = pick(i, 'summary');
+  return {
+    id: String(pick(i, 'id')),
+    idReadable: typeof idReadable === 'string' ? idReadable : undefined,
+    summary: typeof summary === 'string' ? summary : undefined,
+    originalEffortMinutes: periodMinutes(originalEffortField),
+    currentEffortMinutes: periodMinutes(currentEffortField),
+    resolved: typeof resolvedMs === 'number' && resolvedMs > 0,
+    resolvedAt: typeof resolvedMs === 'number' && resolvedMs > 0 ? resolvedMs : null,
+    assigneeId,
+    assigneeName: assigneeId !== null && typeof aname === 'string' ? aname : null,
+  };
+}
+
 export class YouTrackHttpClient implements YouTrackClient {
   constructor(private readonly conn: RestConnection = defaultConnection()) {}
 
@@ -216,6 +266,22 @@ export class YouTrackHttpClient implements YouTrackClient {
       out.push({ id: String(pick(u, 'id')), login: String(pick(u, 'login')), name: String(pick(u, 'name')) });
     }
     return out;
+  }
+  async searchUsers(query: string, limit = 20): Promise<YtUser[]> {
+    // YouTrack's /api/users supports a `query` prefix search over login/name/email.
+    const users = await this.conn.get('/api/users', {
+      fields: 'id,login,name',
+      query,
+      $top: String(limit),
+    });
+    if (!Array.isArray(users)) return [];
+    return users
+      .filter((u) => typeof pick(u, 'id') === 'string')
+      .map((u) => ({
+        id: String(pick(u, 'id')),
+        login: String(pick(u, 'login') ?? ''),
+        name: String(pick(u, 'name') ?? pick(u, 'login') ?? ''),
+      }));
   }
 
   async isUserInGroup(userId: string, groupName: string): Promise<boolean> {
@@ -249,9 +315,12 @@ export class YouTrackHttpClient implements YouTrackClient {
   }
 
   async canManageBoard(boardId: string): Promise<boolean> {
-    // SPIKE: confirm how to resolve the caller's real Board (sprint create/update)
-    // permission. Placeholder assumes a readable board grants no write; the real
-    // check must query the caller's permissions for the board's project.
+    // KNOWN LIMITATION: this confirms the board is READABLE, not that the caller holds
+    // YouTrack's native Board/Sprint-update permission. Effective authorization for sprint
+    // create/edit comes from the app's manager-role gate (canCreateSprint requires Capacity
+    // Managers group membership); because REST runs under the app's service token rather than
+    // the caller, YouTrack itself won't reject the write. A full check would query the caller's
+    // permissions for the board's project (e.g. /api/permissions/cache). Tracked follow-up.
     const board = await this.getBoard(boardId);
     return board !== null;
   }
@@ -327,39 +396,44 @@ export class YouTrackHttpClient implements YouTrackClient {
     originalEffortField: string,
     currentEffortField: string,
   ): Promise<YtIssue[]> {
-    // SPIKE: confirm the Assignee field name/shape on the target version. Assignee is a
-    // single-user custom field; we read its value id as the stable user id.
-    const fields =
-      'id,resolved,customFields(name,value(minutes,presentation,id,login))';
+    // Verified on YouTrack 2025.3: Assignee is a SingleUserIssueCustomField; value.id is the
+    // stable user id and value.name the display name. idReadable + summary drive the in-planner
+    // "plan work" issue table. Read endpoint GET /api/agiles/{board}/sprints/{sprint}/issues.
     const issues = await this.conn.get(
       `/api/agiles/${encodeURIComponent(boardId)}/sprints/${encodeURIComponent(sprintId)}/issues`,
-      { fields },
+      { fields: ISSUE_FIELDS },
     );
     if (!Array.isArray(issues)) return [];
-    return issues.map((i) => {
-      const cf = pick(i, 'customFields');
-      const periodMinutes = (name: string): number | null => {
-        if (!Array.isArray(cf)) return null;
-        const f = cf.find((c) => pick(c, 'name') === name);
-        const m = pick(pick(f, 'value'), 'minutes');
-        return typeof m === 'number' ? m : null;
-      };
-      const resolvedMs = pick(i, 'resolved');
-      const assigneeId = (): string | null => {
-        if (!Array.isArray(cf)) return null;
-        const f = cf.find((c) => pick(c, 'name') === 'Assignee');
-        const id = pick(pick(f, 'value'), 'id');
-        return typeof id === 'string' && id.length > 0 ? id : null;
-      };
-      return {
-        id: String(pick(i, 'id')),
-        originalEffortMinutes: periodMinutes(originalEffortField),
-        currentEffortMinutes: periodMinutes(currentEffortField),
-        resolved: typeof resolvedMs === 'number' && resolvedMs > 0,
-        resolvedAt: typeof resolvedMs === 'number' && resolvedMs > 0 ? resolvedMs : null,
-        assigneeId: assigneeId(),
-      };
+    return issues.map((i) => mapYtIssue(i, originalEffortField, currentEffortField));
+  }
+
+  async searchIssues(
+    query: string,
+    originalEffortField: string,
+    currentEffortField: string,
+    limit = 200,
+  ): Promise<YtIssue[]> {
+    if (query.trim().length === 0) return [];
+    const issues = await this.conn.get('/api/issues', {
+      fields: ISSUE_FIELDS,
+      query,
+      $top: String(limit),
     });
+    if (!Array.isArray(issues)) return [];
+    return issues.map((i) => mapYtIssue(i, originalEffortField, currentEffortField));
+  }
+
+  async addIssueToSprint(boardId: string, sprintId: string, issueId: string): Promise<void> {
+    await this.conn.post(
+      `/api/agiles/${encodeURIComponent(boardId)}/sprints/${encodeURIComponent(sprintId)}/issues`,
+      { id: issueId },
+    );
+  }
+
+  async removeIssueFromSprint(boardId: string, sprintId: string, issueId: string): Promise<void> {
+    await this.conn.delete(
+      `/api/agiles/${encodeURIComponent(boardId)}/sprints/${encodeURIComponent(sprintId)}/issues/${encodeURIComponent(issueId)}`,
+    );
   }
 
   async moveUnresolvedIssues(
@@ -370,12 +444,30 @@ export class YouTrackHttpClient implements YouTrackClient {
     const issues = await this.getSprintIssues(boardId, fromSprintId, '', '');
     for (const issue of issues) {
       if (issue.resolved) continue;
-      // SPIKE: verify the endpoint for adding an issue to a sprint on the target version.
+      // Verified on 2025.3: POST /api/agiles/{board}/sprints/{sprint}/issues with {id} adds it.
       await this.conn.post(
         `/api/agiles/${encodeURIComponent(boardId)}/sprints/${encodeURIComponent(toSprintId)}/issues`,
         { id: issue.id },
       );
     }
+  }
+
+  async setIssueAssignee(issueId: string, assigneeId: string | null): Promise<void> {
+    // Assignee is a single-user custom field; setting value to null unassigns. Verified on
+    // 2025.3: $type SingleUserIssueCustomField, value {id} assigns and value null unassigns.
+    await this.conn.post(
+      `/api/issues/${encodeURIComponent(issueId)}`,
+      {
+        customFields: [
+          {
+            name: 'Assignee',
+            $type: 'SingleUserIssueCustomField',
+            value: assigneeId !== null ? { id: assigneeId } : null,
+          },
+        ],
+      },
+      { fields: 'id' },
+    );
   }
 
   async getExtensionProperty(

@@ -85,9 +85,10 @@ async function handleApi(ctx: YtContext): Promise<void> {
   // The backend runtime has no `fetch` and no automatic same-instance REST auth, so it
   // authenticates as the app with a token. The token is stored once in the app's global
   // storage via the `/__configure` control path (an admin sets it at provisioning time);
-  // app settings are used as a fallback. SPIKE/SECURITY: an admin-scoped token stored here
-  // is over-privileged — the proper long-term path is the Backend JS (entities) API, which
-  // needs no token. See youtrack-http-client.ts.
+  // app settings are used as a fallback. KNOWN LIMITATION (security): the provisioned token is
+  // admin-scoped and therefore over-privileged relative to the manifest's scopes; the token-free
+  // long-term path is the Backend JS (entities) API. Mitigated by the write-once bootstrap below.
+  // See youtrack-http-client.ts. Tracked follow-up.
   const store = ctx.globalStorage?.extensionProperties ?? {};
   if (envelope.path === '/__configure') {
     // Provisioning-only control path that stores the backend's app token in app storage.
@@ -98,7 +99,7 @@ async function handleApi(ctx: YtContext): Promise<void> {
     //   - The base URL is NEVER caller-supplied (that would be an SSRF / token-exfiltration
     //     vector); the backend always talks to its own instance via the runtime default
     //     (see runtimeBaseUrl / SCP_YT_BASE_URL in youtrack-http-client.ts).
-    // SECURITY/SPIKE: this token bridge is a provisioning stopgap; the proper design is the
+    // KNOWN LIMITATION: this token bridge is a provisioning stopgap; the proper design is the
     // Backend JS (entities) API, which needs no stored token at all — tracked as follow-up.
     const alreadySet = typeof store.scpYoutrackToken === 'string' && store.scpYoutrackToken.length > 0;
     if (alreadySet) {

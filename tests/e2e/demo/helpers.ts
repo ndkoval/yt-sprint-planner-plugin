@@ -1,35 +1,32 @@
 /**
- * Shared helpers for the demo E2E suite: persona navigation, human-like interaction
- * (visible gliding cursor + realistic timing), accessibility scan, and a console/page
- * error guard so every journey also asserts the UI is clean.
+ * Helpers for the REAL-YouTrack demo suite. The app runs as installed widgets inside a
+ * YouTrack project (in a nested iframe) plus the native Kanban board. These helpers
+ * open the app widget and return its {@link Frame} so journeys can drive the real app UI,
+ * while the cursor + caption overlays live in the top YouTrack page.
+ *
+ * The generic recording helpers (Captioner, cursor motion, title cards) live in
+ * tests/e2e/shared; only the navigation/frame plumbing here is YouTrack-specific.
  */
-import { mkdir, writeFile } from 'node:fs/promises';
-import path from 'node:path';
-import { test as base, expect, type Locator, type Page, type TestInfo } from '@playwright/test';
-import AxeBuilder from '@axe-core/playwright';
-import { CURSOR_INIT_SCRIPT } from './cursor.js';
+import { spawnSync } from 'node:child_process';
+import { test as base, expect, type Page, type Frame, type Locator } from '@playwright/test';
+import { CURSOR_INIT_SCRIPT } from '../shared/cursor.js';
+import { primeTitleCard } from '../shared/recording.js';
 
-export type Persona = 'manager' | 'alice' | 'bob' | 'charlie';
+export {
+  Captioner,
+  showTitleCard,
+  primeTitleCard,
+  closeTitleCard,
+  settle,
+  moveTo,
+  humanClick,
+  humanFill,
+  estNarrationMs,
+} from '../shared/recording.js';
+export { expect };
 
-const PROJECT = 'proj-demo';
-export const DEMO_PROJECT = PROJECT;
-
-/**
- * Shared `test` for the demo suite. Auto-fixtures (run for every test, across all files):
- *  - reset the harness world to the exact seeded baseline (`/__demo/reset`) → deterministic
- *    and independent of run order;
- *  - inject a visible cursor overlay into every page + popup so the recordings look like a
- *    real person is using the app.
- * Import `test`/`expect` from here.
- */
-export const test = base.extend<{ freshWorld: void; demoCursor: void }>({
-  freshWorld: [
-    async ({ request }, use) => {
-      await request.post('/__demo/reset');
-      await use();
-    },
-    { auto: true },
-  ],
+/** Real-demo test: injects the cursor + caption overlay into every YouTrack page. */
+export const test = base.extend<{ demoCursor: void }>({
   demoCursor: [
     async ({ context }, use) => {
       await context.addInitScript(CURSOR_INIT_SCRIPT);
@@ -38,247 +35,175 @@ export const test = base.extend<{ freshWorld: void; demoCursor: void }>({
     { auto: true },
   ],
 });
-export { expect };
 
-// ── Human-like interaction ────────────────────────────────────────────────────
-// Playwright normally teleports the mouse and types instantly. These helpers move the
-// pointer in small steps (so the injected cursor glides), pause briefly, and type with a
-// per-key delay — the pacing a person would use in a demo. Tunable via env for A/B.
-const STEP = Number(process.env.DEMO_MOVE_STEPS ?? 22);
-const AFTER_MOVE_MS = Number(process.env.DEMO_AFTER_MOVE_MS ?? 160);
-const AFTER_CLICK_MS = Number(process.env.DEMO_AFTER_CLICK_MS ?? 350);
-const TYPE_DELAY_MS = Number(process.env.DEMO_TYPE_DELAY_MS ?? 65);
+export const PROJECT_KEY = process.env.PROJECT_KEY ?? 'AGP';
+export const BOARD_NAME = 'AppGlass Board';
 
-function resolve(page: Page, target: Locator | string): Locator {
-  return typeof target === 'string' ? page.locator(target) : target;
-}
-
-/** Glide the cursor to the centre of an element (scrolling it into view first). */
-export async function moveTo(page: Page, target: Locator | string): Promise<Locator> {
-  const el = resolve(page, target);
-  await el.scrollIntoViewIfNeeded();
-  const box = await el.boundingBox();
-  if (box) {
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: STEP });
-    await page.waitForTimeout(AFTER_MOVE_MS);
+/** Find the app widget's iframe (a nested srcdoc frame) by its content. */
+export async function appFrame(page: Page, timeoutMs = 30_000): Promise<Frame> {
+  const deadline = Date.now() + timeoutMs;
+  // The widget content lives in a nested about:srcdoc frame. Identify it by an actual
+  // element query (textContent falsely matches the YouTrack app-host shell frame).
+  const marker = /Raw capacity|Focus factor|Not configured yet|Loading Sprint capacity|Agile board|Effort field mapping/;
+  while (Date.now() < deadline) {
+    for (const f of page.frames()) {
+      const n = await f.getByText(marker).count().catch(() => 0);
+      if (n > 0) return f;
+    }
+    await page.waitForTimeout(500);
   }
-  return el;
+  throw new Error('app widget frame not found');
 }
 
-/** Move to an element, then click it, with a human pause afterwards. */
-export async function humanClick(page: Page, target: Locator | string): Promise<void> {
-  const el = await moveTo(page, target);
-  await el.click();
-  await page.waitForTimeout(AFTER_CLICK_MS);
-}
-
-/** Move to a field, focus it, clear it, and type the text at a human cadence. */
-export async function humanFill(page: Page, target: Locator | string, text: string): Promise<void> {
-  const el = await moveTo(page, target);
-  await el.click();
-  await el.fill('');
-  await el.pressSequentially(text, { delay: TYPE_DELAY_MS });
-  await page.waitForTimeout(AFTER_MOVE_MS);
-}
-
-/** A short pause between beats so the recording is watchable (not an assertion wait). */
-export function settle(page: Page, ms = 650): Promise<void> {
-  return page.waitForTimeout(ms);
+export interface OpenAppOptions {
+  /** Paint a branded title card as the first frame (via the cursor init reelIntro params). */
+  reel?: { title: string; subtitle: string };
+  /** Narrate this line over the title card while YouTrack + the widget load (kills dead air). */
+  cap?: { say(text: string): Promise<void> };
+  intro?: string;
 }
 
 /**
- * Estimated time to speak `text` at the reel's calm narration cadence, plus a tail of
- * breathing room. This paces the video to the narration so the synthesized voice (see
- * scripts/render-reels.mjs, Samantha @ ~175 wpm) never runs into the next line. Kept a
- * touch generous (2.5 wps) so the actual speech always finishes inside its window.
+ * Open a project app widget ("Sprint Capacity" or "Sprint Capacity Settings") and return its
+ * frame. With `reel`, a branded title card is painted before the first frame and stays up
+ * through the load; narrate `intro` over it (then fade with {@link closeTitleCard}).
  */
-export function estNarrationMs(text: string): number {
-  const words = text.split(/\s+/).filter(Boolean).length;
-  return Math.round((words / 2.5) * 1000) + 600;
-}
-
-/** Reel intro: a branded title card painted before the first frame (see cursor.ts). */
-export interface ReelIntro {
-  title: string;
-  subtitle: string;
-}
-
-/**
- * A text-less brand-gradient cover used to mask in-reel page navigations (persona
- * switches): it hides the app's loading spinner behind the brand gradient, so a switch
- * reads as a smooth branded wipe instead of a white flash. Pair with {@link closeTitleCard}
- * right after the navigation to fade it away.
- */
-export const REEL_WIPE: ReelIntro = { title: '', subtitle: '' };
-
-function withReel(params: URLSearchParams, reel?: ReelIntro): void {
-  if (!reel) return;
-  params.set('reelIntro', '1');
-  params.set('reelTitle', reel.title);
-  params.set('reelSubtitle', reel.subtitle);
-}
-
-/** Fade out the reel's title card to reveal the app behind it. No-op off a reel. */
-export async function closeTitleCard(page: Page): Promise<void> {
-  await page.evaluate(
-    () => (window as unknown as { __closeTitleCard?: () => Promise<void> }).__closeTitleCard?.(),
-  );
-  await page.waitForTimeout(200);
-}
-
-/**
- * Show a full-screen title card at the very start of a reel so the recording "introduces
- * itself" before the walkthrough begins. Displays for `ms`, then removes itself.
- */
-export async function showTitleCard(
+export async function openProjectApp(
   page: Page,
-  title: string,
-  subtitle: string,
-  ms = 2200,
-): Promise<void> {
-  await page.evaluate(
-    ([t, s]) => {
-      const el = document.createElement('div');
-      el.id = '__demo-titlecard';
-      el.style.cssText = [
-        'position:fixed','inset:0','z-index:2147483647','display:flex','flex-direction:column',
-        'align-items:center','justify-content:center','text-align:center',
-        'background:linear-gradient(135deg,#1a73e8,#0b3d91)','color:#fff',
-        "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
-        'opacity:0','transition:opacity 0.35s ease',
-      ].join(';');
-      el.innerHTML =
-        '<div style="font-size:40px;font-weight:800;letter-spacing:-0.5px;max-width:80%">' +
-        (t as string) +
-        '</div><div style="font-size:20px;margin-top:14px;opacity:0.9;max-width:70%">' +
-        (s as string) +
-        '</div>';
-      document.body.appendChild(el);
-      requestAnimationFrame(() => (el.style.opacity = '1'));
-    },
-    [title, subtitle] as const,
-  );
-  await page.waitForTimeout(ms);
-  await page.evaluate(() => {
-    const el = document.getElementById('__demo-titlecard');
-    if (!el) return;
-    el.style.opacity = '0';
-    setTimeout(() => el.remove(), 400);
+  widget = 'Sprint Capacity',
+  opts: OpenAppOptions = {},
+): Promise<Frame> {
+  const params = new URLSearchParams({ tab: 'apps' });
+  if (opts.reel) {
+    params.set('reelIntro', '1');
+    params.set('reelTitle', opts.reel.title);
+    params.set('reelSubtitle', opts.reel.subtitle);
+  }
+  const url = `/projects/${PROJECT_KEY}?${params.toString()}`;
+  // Paint the title card on the current (about:blank) page first so the reel's VERY FIRST frame
+  // is the branded card, not a white flash before the navigation's document-start card paints.
+  if (opts.reel) await primeTitleCard(page, opts.reel.title, opts.reel.subtitle);
+  if (opts.cap && opts.intro) {
+    // Start navigating (the card paints at document-start) and narrate over the load without
+    // waiting for the whole YouTrack SPA — keeps the intro card's dead-air short.
+    const nav = page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => null);
+    await page.waitForTimeout(950);
+    await opts.cap.say(opts.intro);
+    await nav;
+  } else {
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+  }
+  await page.waitForTimeout(1500);
+  await page.getByText(new RegExp(`^${widget}$`)).first().click();
+  return appFrame(page);
+}
+
+/** Open the native YouTrack agile board (optionally a specific sprint). */
+export async function openBoard(page: Page, agileId: string, sprintId?: string): Promise<void> {
+  const url = sprintId ? `/agiles/${agileId}/${sprintId}` : `/agiles/${agileId}`;
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(6000);
+}
+
+/** Resolve an agile board id by name (via the authenticated REST API) and open it. */
+export async function openBoardByName(page: Page, name = BOARD_NAME): Promise<string> {
+  const res = await page.request.get('/api/agiles?fields=id,name&$top=200', {
+    headers: { Accept: 'application/json' },
   });
-  await page.waitForTimeout(450);
-}
-
-// ── Subtitles ───────────────────────────────────────────────────────────────
-interface Cue {
-  tMs: number;
-  text: string;
-}
-
-function vttTime(ms: number): string {
-  const h = Math.floor(ms / 3_600_000);
-  const m = Math.floor((ms % 3_600_000) / 60_000);
-  const s = Math.floor((ms % 60_000) / 1000);
-  const mmm = Math.floor(ms % 1000);
-  const p = (n: number, w = 2) => String(n).padStart(w, '0');
-  return `${p(h)}:${p(m)}:${p(s)}.${p(mmm, 3)}`;
+  const boards = (await res.json()) as Array<{ id: string; name: string }>;
+  const id = Array.isArray(boards) ? boards.find((b) => b.name === name)?.id ?? '' : '';
+  if (!id) throw new Error(`board not found: ${name}`);
+  await page.goto(`/agiles/${id}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(6500);
+  return id;
 }
 
 /**
- * Narrates a reel: shows an on-screen caption (baked into the video) and records timed
- * cues so a WebVTT subtitle track can be written for the recording.
+ * Perform a VISIBLE, reliable drag of a board card onto a lane.
+ *
+ * The board uses native HTML5 drag-and-drop, which does not fire from synthetic mouse events,
+ * so we dispatch the real drag events (dragstart/drag/dragover/drop/dragend) with a shared
+ * DataTransfer created in the widget frame — reliable regardless of the tall auto-height
+ * iframe's scroll position. For visibility we glide the injected cursor AND dispatch `drag`
+ * events carrying the frame-relative cursor position, so the board's floating ghost follows it.
  */
-export class Captioner {
-  private readonly cues: Cue[] = [];
-  private readonly startMs = Date.now();
-  constructor(private readonly page: Page) {}
-
-  /**
-   * Narrate one line: show the caption, record the cue, and hold for the time it takes to
-   * speak it. Holding here paces the recording to the narration so, once rendered, the
-   * voice for this line finishes before the next `say()` — no overlapping speech.
-   */
-  async say(text: string): Promise<void> {
-    this.cues.push({ tMs: Date.now() - this.startMs, text });
-    await this.page.evaluate((t) => {
-      (window as unknown as { __demoSay?: (s: string) => void }).__demoSay?.(t);
-    }, text);
-    if (text) await this.page.waitForTimeout(estNarrationMs(text));
-  }
-
-  /** Write a WebVTT subtitle track for the reel and return the file path. */
-  async writeVtt(name: string): Promise<string> {
-    // Overridable so the real-YouTrack demo suite writes to its own artifacts dir.
-    const dir = process.env.SCP_SUBTITLES_DIR ?? path.join('artifacts', 'demo', 'subtitles');
-    await mkdir(dir, { recursive: true });
-    const file = path.join(dir, `${name}.vtt`);
-    const visible = this.cues.filter((c) => c.text.length > 0);
-    const lines = ['WEBVTT', ''];
-    visible.forEach((cue, i) => {
-      const end = visible[i + 1]?.tMs ?? cue.tMs + 3500;
-      lines.push(`${i + 1}`, `${vttTime(cue.tMs)} --> ${vttTime(end)}`, cue.text, '');
-    });
-    await writeFile(file, lines.join('\n'));
-    return file;
-  }
-}
-
-/**
- * Open the project-tab widget as a persona and wait for the first data render. Pass
- * `reel` to paint a branded title card as the very first frame (the app loads behind it;
- * fade it with {@link closeTitleCard} after narrating the intro).
- */
-export async function openTab(
+export async function dragCard(
   page: Page,
-  persona: Persona,
-  sprintId?: string,
-  reel?: ReelIntro,
+  frame: Frame,
+  source: Locator,
+  target: Locator,
 ): Promise<void> {
-  const params = new URLSearchParams({ as: persona, projectId: PROJECT });
-  if (sprintId) params.set('sprint', sprintId);
-  withReel(params, reel);
-  await page.goto(`/project-tab/index.html?${params.toString()}`, { waitUntil: 'networkidle' });
-  await expect(page.getByText('Sprint capacity', { exact: false }).first()).toBeVisible();
+  // The board uses HTML5 drag-and-drop, which does NOT fire from synthetic mouse events, so we
+  // dispatch the real drag events with a shared DataTransfer created in the widget frame — this
+  // is reliable regardless of the tall auto-height iframe's scroll position (dispatchEvent
+  // targets the element directly). For VISIBILITY we (a) glide the top-level injected cursor and
+  // (b) dispatch `drag` events with the widget-frame-relative cursor position so the board's
+  // floating ghost tracks the cursor on the recording.
+  const rect = (loc: Locator) =>
+    loc.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + Math.min(24, r.height / 2) };
+    });
+
+  await source.scrollIntoViewIfNeeded();
+  const fromTop = await source.boundingBox(); // top-page coords, for the visible cursor
+  const fromIn = await rect(source); // frame-relative, for the ghost
+  if (fromTop !== null) {
+    await page.mouse.move(fromTop.x + fromTop.width / 2, fromTop.y + fromTop.height / 2, { steps: 12 });
+    await page.waitForTimeout(160);
+  }
+
+  const dt = await frame.evaluateHandle(() => new DataTransfer());
+  await source.dispatchEvent('dragstart', { dataTransfer: dt });
+  await page.waitForTimeout(140);
+
+  await target.scrollIntoViewIfNeeded();
+  const toTop = await target.boundingBox();
+  const toIn = await rect(target);
+  const steps = 22;
+  for (let i = 1; i <= steps; i += 1) {
+    const t = i / steps;
+    if (fromTop !== null && toTop !== null) {
+      const cx = fromTop.x + fromTop.width / 2 + (toTop.x + toTop.width / 2 - (fromTop.x + fromTop.width / 2)) * t;
+      const cy = fromTop.y + fromTop.height / 2 + (toTop.y + Math.min(24, toTop.height / 2) - (fromTop.y + fromTop.height / 2)) * t;
+      await page.mouse.move(cx, cy);
+    }
+    // Ghost follows via the board's onDrag, positioned in frame-relative coords.
+    const gx = fromIn.x + (toIn.x - fromIn.x) * t;
+    const gy = fromIn.y + (toIn.y - fromIn.y) * t;
+    await source.dispatchEvent('drag', { clientX: gx, clientY: gy, dataTransfer: dt }).catch(() => {});
+    if (i % 6 === 0) await target.dispatchEvent('dragover', { dataTransfer: dt }).catch(() => {});
+    await page.waitForTimeout(16);
+  }
+
+  await target.dispatchEvent('dragover', { dataTransfer: dt });
+  await page.waitForTimeout(100);
+  await target.dispatchEvent('drop', { dataTransfer: dt });
+  await source.dispatchEvent('dragend', { dataTransfer: dt }).catch(() => {});
+  await dt.dispose();
+  await page.waitForTimeout(400);
 }
 
-/** Open the project-settings widget as a persona (optionally with a reel title card). */
-export async function openSettings(page: Page, persona: Persona, reel?: ReelIntro): Promise<void> {
-  const params = new URLSearchParams({ as: persona, projectId: PROJECT });
-  withReel(params, reel);
-  await page.goto(`/project-settings/index.html?${params.toString()}`, { waitUntil: 'networkidle' });
+/**
+ * Reset the live YouTrack to the fixed, prepared demo state so every reel is recorded against
+ * identical data (req: "always use the same data, prepared in the beginning"). Runs the same
+ * wipe-and-seed script as global setup; called from each reel's beforeAll so the reels are
+ * independent of order and of anything a previous reel changed.
+ */
+export function resetDemoState(): void {
+  const r = spawnSync('node', ['scripts/setup-youtrack-demo.mjs'], {
+    encoding: 'utf8',
+    stdio: 'inherit',
+  });
+  if (r.status !== 0) throw new Error('resetDemoState: setup-youtrack-demo.mjs failed');
 }
 
-/** Attach a console/page-error collector; call the returned assert at the end. */
+/** Console/page-error guard; ignores benign YouTrack noise. Returns an assert to call at the end. */
 export function guardErrors(page: Page): () => void {
   const errors: string[] = [];
-  page.on('console', (m) => {
-    if (m.type() === 'error') errors.push(m.text());
-  });
   page.on('pageerror', (e) => errors.push(String(e)));
   return () => {
-    const real = errors.filter((e) => !/favicon|net::ERR_ABORTED/.test(e));
-    expect(real, `unexpected console/page errors:\n${real.join('\n')}`).toHaveLength(0);
+    const real = errors.filter((e) => !/favicon|ResizeObserver|net::ERR_ABORTED|Failed to load resource/i.test(e));
+    expect(real, `page errors:\n${real.join('\n')}`).toHaveLength(0);
   };
-}
-
-/** Run an axe accessibility scan and fail on serious/critical violations. */
-export async function assertAccessible(page: Page, info: TestInfo, label: string): Promise<void> {
-  const results = await new AxeBuilder({ page })
-    .withTags(['wcag2a', 'wcag2aa'])
-    // color-contrast is intentionally not enforced in the standalone harness: the widget
-    // inherits YouTrack's theme tokens (--ring-* variables) in production, which the
-    // bare demo page does not provide, so contrast here is not representative. All
-    // structural checks (labels, roles, names, keyboard) remain enforced.
-    .disableRules(['color-contrast'])
-    .analyze();
-  const blocking = results.violations.filter(
-    (v) => v.impact === 'serious' || v.impact === 'critical',
-  );
-  await info.attach(`axe-${label}.json`, {
-    body: JSON.stringify(results.violations, null, 2),
-    contentType: 'application/json',
-  });
-  expect(
-    blocking,
-    `blocking a11y violations: ${blocking.map((v) => v.id).join(', ')}`,
-  ).toHaveLength(0);
 }

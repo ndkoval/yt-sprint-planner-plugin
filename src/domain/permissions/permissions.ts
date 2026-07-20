@@ -52,6 +52,10 @@ export function canImportExport(principal: Principal): boolean {
 export function canReadDiagnostics(principal: Principal): boolean {
   return principal.isManager;
 }
+/** Assigning Sprint issues to teammates is a manager planning action. */
+export function canAssignIssues(principal: Principal): boolean {
+  return principal.isManager;
+}
 
 /**
  * Creating / editing the native Sprint requires manager role AND a real Board

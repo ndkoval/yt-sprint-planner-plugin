@@ -38,7 +38,7 @@ pass `lint` / `typecheck` / `unit` / `contract`.
 | `typescript-language-server`, `typescript` (global) | Required by `typescript-lsp` | `npm i -g typescript-language-server typescript` |
 | `ffmpeg` / `ffprobe` | Video/trace analysis, contact sheets (§28) | `brew install ffmpeg` |
 | Chromium (Playwright) | E2E browser | `npx playwright install --with-deps chromium` |
-| Local YouTrack Server distribution | Real integration tests (no Docker) | downloaded by `scripts/provision-real-youtrack.mjs` |
+| Local YouTrack Server distribution | Real integration tests (no Docker) | downloaded by `scripts/provision-youtrack.mjs` |
 
 > **Known local-tooling gotcha.** A globally-installed `typescript` wrapper can shadow the
 > project compiler and fail with `Unable to resolve @typescript/typescript-<platform>`.

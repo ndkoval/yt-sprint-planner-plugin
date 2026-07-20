@@ -24,3 +24,6 @@ blob-report/
 *.log
 .idea/
 .vscode/
+
+# Playwright MCP browser session output
+.playwright-mcp/

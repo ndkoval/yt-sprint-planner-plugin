@@ -3,7 +3,12 @@ import Button from '@jetbrains/ring-ui-built/components/button/button';
 import Input, { Size as InputSize } from '@jetbrains/ring-ui-built/components/input/input';
 import Checkbox from '@jetbrains/ring-ui-built/components/checkbox/checkbox';
 import Select from '@jetbrains/ring-ui-built/components/select/select';
-import type { BoardSummary, PutConfigRequest } from '../../shared/api';
+import type {
+  BoardSummary,
+  ProjectFieldSummary,
+  PutConfigRequest,
+  UserSummary,
+} from '../../shared/api';
 import type { Participant, ProjectConfig } from '../../shared/types';
 import { ApiClient, ApiClientError } from '../api-client';
 import { LoadingState } from '../components/LoadingState';
@@ -13,28 +18,27 @@ import { ConflictBanner } from '../components/ConflictBanner';
 
 export interface SettingsFormProps {
   client?: ApiClient;
-}
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  /**
+   * When provided, the form renders as an embedded panel inside the planner with a
+   * "Back to planner" control that invokes this callback (the planner reloads on return).
+   * When omitted, the form renders stand-alone (legacy / testing).
+   */
+  onClose?: () => void;
 }
 
 function defaultConfig(): ProjectConfig {
   return {
     version: 1,
     boardId: '',
-    originalEffortField: 'Original estimation',
-    currentEffortField: 'Estimation',
+    originalEffortField: 'Original Effort',
+    currentEffortField: 'Current Effort',
     hoursPerDay: 8,
     sprintLengthDays: 14,
-    firstSprintStart: todayIso(),
     datePolicy: 'continuous',
     nameTemplate: 'AppGlass {year}-S{sequence}',
-    bootstrapFocusFactor: 0.7,
+    backlogQuery: '#Unresolved',
+    // How fast the Focus Factor learns from finished Sprints (see the explanation below).
     learningRate: 0.3,
-    maxFactorStep: 0.1,
-    minFocusFactor: 0.3,
-    maxFocusFactor: 0.9,
     participants: [],
   };
 }
@@ -44,27 +48,16 @@ interface Problem {
   message: string;
 }
 
-const FRACTION_FIELDS: Array<{
-  key: keyof ProjectConfig;
-  label: string;
-}> = [
-  { key: 'bootstrapFocusFactor', label: 'Bootstrap focus factor (0–1)' },
-  { key: 'learningRate', label: 'Learning rate (0–1)' },
-  { key: 'maxFactorStep', label: 'Max factor step (0–1)' },
-  { key: 'minFocusFactor', label: 'Min focus factor (0–1)' },
-  { key: 'maxFocusFactor', label: 'Max focus factor (0–1)' },
-];
-
 function validate(config: ProjectConfig): Problem[] {
   const problems: Problem[] = [];
   if (config.boardId.trim().length === 0) {
     problems.push({ path: 'boardId', message: 'Select an Agile board.' });
   }
   if (config.originalEffortField.trim().length === 0) {
-    problems.push({ path: 'originalEffortField', message: 'Original Effort field is required.' });
+    problems.push({ path: 'originalEffortField', message: 'Select the Original Effort field.' });
   }
   if (config.currentEffortField.trim().length === 0) {
-    problems.push({ path: 'currentEffortField', message: 'Current Effort field is required.' });
+    problems.push({ path: 'currentEffortField', message: 'Select the Current Effort field.' });
   }
   if (!(config.hoursPerDay > 0)) {
     problems.push({ path: 'hoursPerDay', message: 'Hours per day must be greater than 0.' });
@@ -72,27 +65,21 @@ function validate(config: ProjectConfig): Problem[] {
   if (!(config.sprintLengthDays >= 1)) {
     problems.push({ path: 'sprintLengthDays', message: 'Sprint length must be at least 1 day.' });
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(config.firstSprintStart)) {
-    problems.push({ path: 'firstSprintStart', message: 'Enter a valid first-Sprint start date.' });
-  }
   if (config.nameTemplate.trim().length === 0) {
     problems.push({ path: 'nameTemplate', message: 'Naming template is required.' });
   }
-  for (const { key, label } of FRACTION_FIELDS) {
-    const value = config[key] as number;
-    if (!(value >= 0 && value <= 1)) {
-      problems.push({ path: key, message: `${label} must be between 0 and 1.` });
-    }
-  }
-  if (config.minFocusFactor > config.maxFocusFactor) {
-    problems.push({
-      path: 'minFocusFactor',
-      message: 'Min focus factor must not exceed max focus factor.',
-    });
+  if (!(config.learningRate > 0 && config.learningRate <= 1)) {
+    problems.push({ path: 'learningRate', message: 'Learning rate must be between 0 and 1.' });
   }
   config.participants.forEach((p, i) => {
     if (p.userId.trim().length === 0) {
       problems.push({ path: `participants[${i}].userId`, message: 'Participant id is required.' });
+    }
+    if (!(p.allocation > 0 && p.allocation <= 1)) {
+      problems.push({
+        path: `participants[${i}].allocation`,
+        message: 'Allocation must be between 1% and 100%.',
+      });
     }
   });
   return problems;
@@ -121,6 +108,9 @@ const fieldRow: React.CSSProperties = {
   marginBottom: 'calc(var(--ring-unit) * 2)',
 };
 
+// Each schedule field sits in a min-width box so its label never wraps to two lines.
+const fieldBox: React.CSSProperties = { minWidth: 160 };
+
 const cellStyle: React.CSSProperties = {
   padding: 'calc(var(--ring-unit) * 1)',
   borderBottom: '1px solid var(--ring-line-color)',
@@ -128,16 +118,33 @@ const cellStyle: React.CSSProperties = {
   verticalAlign: 'middle',
 };
 
+const helpTextStyle: React.CSSProperties = {
+  font: 'var(--ring-font-smaller-lower)',
+  color: 'var(--ring-secondary-color)',
+  lineHeight: 1.5,
+};
+
+interface FieldOption {
+  key: string;
+  label: string;
+}
+
 /** §7 project settings form for the Sprint Capacity Planner. */
-export function SettingsForm({ client: injected }: SettingsFormProps): React.JSX.Element {
+export function SettingsForm({ client: injected, onClose }: SettingsFormProps): React.JSX.Element {
   const client = useMemo(() => injected ?? new ApiClient(), [injected]);
 
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [loadError, setLoadError] = useState<unknown>(null);
   const [isManager, setIsManager] = useState(false);
   const [boards, setBoards] = useState<BoardSummary[]>([]);
+  const [projectFields, setProjectFields] = useState<ProjectFieldSummary[]>([]);
   const [config, setConfig] = useState<ProjectConfig>(defaultConfig);
   const [revision, setRevision] = useState(0);
+
+  // User directory for the participant picker + a name lookup for existing rows.
+  const [userOptions, setUserOptions] = useState<UserSummary[]>([]);
+  const [namesById, setNamesById] = useState<Record<string, string>>({});
+  const [userSearching, setUserSearching] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -145,7 +152,6 @@ export function SettingsForm({ client: injected }: SettingsFormProps): React.JSX
   const [serverProblems, setServerProblems] = useState<Problem[]>([]);
   const [conflict, setConflict] = useState<{ retry: () => Promise<void> } | null>(null);
   const [retrying, setRetrying] = useState(false);
-  const [newParticipantId, setNewParticipantId] = useState('');
 
   const problems = useMemo(() => validate(config), [config]);
   const problemFor = useCallback(
@@ -153,16 +159,30 @@ export function SettingsForm({ client: injected }: SettingsFormProps): React.JSX
     [problems],
   );
 
+  const rememberNames = useCallback((users: readonly UserSummary[]): void => {
+    if (users.length === 0) return;
+    setNamesById((prev) => {
+      const next = { ...prev };
+      for (const u of users) next[u.id] = u.name || u.login || u.id;
+      return next;
+    });
+  }, []);
+
   const load = useCallback(async (): Promise<void> => {
     setStatus('loading');
     setLoadError(null);
     try {
-      const [configResponse, boardList] = await Promise.all([
+      const [configResponse, boardList, fieldList, directory] = await Promise.all([
         client.getConfig(),
         client.getBoards(),
+        client.getProjectFields().catch(() => [] as ProjectFieldSummary[]),
+        client.searchUsers('').catch(() => [] as UserSummary[]),
       ]);
       setIsManager(configResponse.isManager);
       setBoards(boardList);
+      setProjectFields(fieldList);
+      setUserOptions(directory);
+      rememberNames(directory);
       setRevision(configResponse.configRevision);
       setConfig(configResponse.config ?? defaultConfig());
       setStatus('ready');
@@ -170,11 +190,26 @@ export function SettingsForm({ client: injected }: SettingsFormProps): React.JSX
       setLoadError(err);
       setStatus('error');
     }
-  }, [client]);
+  }, [client, rememberNames]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const searchUsers = useCallback(
+    (query: string): void => {
+      setUserSearching(true);
+      client
+        .searchUsers(query)
+        .then((users) => {
+          setUserOptions(users);
+          rememberNames(users);
+        })
+        .catch(() => setUserOptions([]))
+        .finally(() => setUserSearching(false));
+    },
+    [client, rememberNames],
+  );
 
   const update = useCallback(<K extends keyof ProjectConfig>(key: K, value: ProjectConfig[K]): void => {
     setSaved(false);
@@ -200,16 +235,20 @@ export function SettingsForm({ client: injected }: SettingsFormProps): React.JSX
     }));
   }, []);
 
-  const addParticipant = useCallback((): void => {
-    const userId = newParticipantId.trim();
-    if (userId.length === 0) return;
-    setSaved(false);
-    setConfig((prev) => ({
-      ...prev,
-      participants: [...prev.participants, { userId, enabled: true }],
-    }));
-    setNewParticipantId('');
-  }, [newParticipantId]);
+  const addParticipant = useCallback(
+    (user: UserSummary): void => {
+      setSaved(false);
+      rememberNames([user]);
+      setConfig((prev) => {
+        if (prev.participants.some((p) => p.userId === user.id)) return prev;
+        return {
+          ...prev,
+          participants: [...prev.participants, { userId: user.id, enabled: true, allocation: 1 }],
+        };
+      });
+    },
+    [rememberNames],
+  );
 
   const save = useCallback(async (): Promise<void> => {
     if (problems.length > 0) return;
@@ -225,7 +264,6 @@ export function SettingsForm({ client: injected }: SettingsFormProps): React.JSX
       setConflict(null);
     } catch (err) {
       if (err instanceof ApiClientError && err.isConflict) {
-        // Reload the latest revision but keep the manager's in-progress edits.
         try {
           const latest = await client.getConfig();
           setRevision(latest.configRevision);
@@ -258,16 +296,61 @@ export function SettingsForm({ client: injected }: SettingsFormProps): React.JSX
       <EmptyState
         title="Insufficient permissions"
         description="Only project managers can change the Sprint Capacity Planner configuration."
+        action={
+          onClose !== undefined ? (
+            <Button onClick={onClose}>Back to planner</Button>
+          ) : undefined
+        }
       />
     );
   }
 
-  const boardData = boards.map((b) => ({ key: b.id, label: b.name, id: b.id }));
+  const boardData: FieldOption[] = boards.map((b) => ({ key: b.id, label: b.name }));
   const selectedBoard = boardData.find((b) => b.key === config.boardId) ?? null;
+
+  // Effort-field options from the project's custom fields. Period fields come first (the
+  // effort fields are periods); the currently-configured value is always present as an
+  // option so a hand-set field never disappears from the picker.
+  const fieldOption = (f: ProjectFieldSummary): FieldOption => ({
+    key: f.name,
+    label: f.type ? `${f.name} · ${f.type}` : f.name,
+  });
+  const sortedFields = [...projectFields].sort((a, b) => {
+    const ap = a.type === 'period' ? 0 : 1;
+    const bp = b.type === 'period' ? 0 : 1;
+    return ap - bp || a.name.localeCompare(b.name);
+  });
+  const fieldOptionsFor = (current: string): FieldOption[] => {
+    const opts = sortedFields.map(fieldOption);
+    if (current && !opts.some((o) => o.key === current)) opts.unshift({ key: current, label: current });
+    return opts;
+  };
+  const origFieldOptions = fieldOptionsFor(config.originalEffortField);
+  const curFieldOptions = fieldOptionsFor(config.currentEffortField);
+
+  const nameFor = (userId: string): string => namesById[userId] ?? userId;
+
+  // Participant picker: users not already on the team.
+  const participantIds = new Set(config.participants.map((p) => p.userId));
+  const addOptions = userOptions
+    .filter((u) => !participantIds.has(u.id))
+    .map((u) => ({ key: u.id, label: `${u.name || u.login} (${u.login})`, model: u }));
 
   return (
     <div style={{ padding: 'calc(var(--ring-unit) * 2)', font: 'var(--ring-font)', maxWidth: 880 }}>
-      <h1 style={{ marginTop: 0, font: 'var(--ring-font-larger)' }}>Sprint Capacity Planner settings</h1>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'calc(var(--ring-unit) * 1.5)',
+          marginBottom: 'calc(var(--ring-unit) * 2)',
+        }}
+      >
+        {onClose !== undefined ? (
+          <Button onClick={onClose}>← Back to planner</Button>
+        ) : null}
+        <h1 style={{ margin: 0, font: 'var(--ring-font-larger)' }}>Sprint Capacity Planner settings</h1>
+      </div>
 
       {conflict !== null ? (
         <ConflictBanner
@@ -303,64 +386,73 @@ export function SettingsForm({ client: injected }: SettingsFormProps): React.JSX
 
       <section style={sectionStyle}>
         <h2 style={sectionTitleStyle}>Effort field mapping</h2>
+        <p style={{ ...helpTextStyle, marginTop: 0 }}>
+          Pick the period fields that hold each issue&rsquo;s planned effort (Original) and
+          remaining effort (Current). These drive the effort and &ldquo;what fits&rdquo; numbers.
+        </p>
         <div style={fieldRow}>
-          <Input
-            label="Original Effort field"
-            size={InputSize.L}
-            value={config.originalEffortField}
-            error={problemFor('originalEffortField')}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              update('originalEffortField', e.target.value)
-            }
-          />
-          <Input
-            label="Current Effort field"
-            size={InputSize.L}
-            value={config.currentEffortField}
-            error={problemFor('currentEffortField')}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              update('currentEffortField', e.target.value)
-            }
-          />
+          <div style={fieldBox}>
+            <label style={{ ...helpTextStyle, display: 'block', marginBottom: 4 }}>
+              Original Effort field
+            </label>
+            <Select
+              data={origFieldOptions}
+              selected={origFieldOptions.find((o) => o.key === config.originalEffortField) ?? null}
+              label="Select a field"
+              filter
+              onSelect={(item) => {
+                if (item !== null && typeof item.key === 'string') update('originalEffortField', item.key);
+              }}
+            />
+          </div>
+          <div style={fieldBox}>
+            <label style={{ ...helpTextStyle, display: 'block', marginBottom: 4 }}>
+              Current Effort field
+            </label>
+            <Select
+              data={curFieldOptions}
+              selected={curFieldOptions.find((o) => o.key === config.currentEffortField) ?? null}
+              label="Select a field"
+              filter
+              onSelect={(item) => {
+                if (item !== null && typeof item.key === 'string') update('currentEffortField', item.key);
+              }}
+            />
+          </div>
         </div>
       </section>
 
       <section style={sectionStyle}>
         <h2 style={sectionTitleStyle}>Schedule</h2>
         <div style={fieldRow}>
-          <Input
-            label="Hours per day"
-            type="number"
-            min={1}
-            step={0.5}
-            size={InputSize.S}
-            value={String(config.hoursPerDay)}
-            error={problemFor('hoursPerDay')}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              update('hoursPerDay', Number(e.target.value))
-            }
-          />
-          <Input
-            label="Sprint length (days)"
-            type="number"
-            min={1}
-            step={1}
-            size={InputSize.S}
-            value={String(config.sprintLengthDays)}
-            error={problemFor('sprintLengthDays')}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              update('sprintLengthDays', Number(e.target.value))
-            }
-          />
-          <Input
-            label="First Sprint start"
-            type="date"
-            value={config.firstSprintStart}
-            error={problemFor('firstSprintStart')}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              update('firstSprintStart', e.target.value)
-            }
-          />
+          <div style={fieldBox}>
+            <Input
+              label="Hours per day"
+              type="number"
+              min={1}
+              step={0.5}
+              size={InputSize.M}
+              value={String(config.hoursPerDay)}
+              error={problemFor('hoursPerDay')}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                update('hoursPerDay', Number(e.target.value))
+              }
+            />
+          </div>
+          <div style={fieldBox}>
+            <Input
+              label="Sprint length (days)"
+              type="number"
+              min={1}
+              step={1}
+              size={InputSize.M}
+              value={String(config.sprintLengthDays)}
+              error={problemFor('sprintLengthDays')}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                update('sprintLengthDays', Number(e.target.value))
+              }
+            />
+          </div>
         </div>
         <Input
           label="Naming template (placeholders: {year} {sequence} {startDate} {finishDate})"
@@ -374,34 +466,85 @@ export function SettingsForm({ client: injected }: SettingsFormProps): React.JSX
       </section>
 
       <section style={sectionStyle}>
-        <h2 style={sectionTitleStyle}>Focus factor</h2>
-        <div style={fieldRow}>
-          {FRACTION_FIELDS.map(({ key, label }) => (
-            <Input
-              key={key}
-              label={label}
-              type="number"
-              min={0}
-              max={1}
-              step={0.05}
-              size={InputSize.S}
-              value={String(config[key] as number)}
-              error={problemFor(key)}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                update(key, Number(e.target.value) as ProjectConfig[typeof key])
-              }
-            />
-          ))}
+        <h2 style={sectionTitleStyle}>Planning backlog</h2>
+        <p style={{ ...helpTextStyle, marginTop: 0 }}>
+          A YouTrack search that defines the backlog you plan from — the pool of issues you can
+          drag into a Sprint on the planning board. Issues already in the Sprint are excluded
+          automatically. Leave empty to hide the backlog lane. Example:{' '}
+          <code>project: AGP State: Open</code>.
+        </p>
+        <Input
+          label="Backlog search query"
+          size={InputSize.L}
+          value={config.backlogQuery}
+          placeholder="#Unresolved"
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            update('backlogQuery', e.target.value)
+          }
+        />
+      </section>
+
+      <section style={sectionStyle}>
+        <h2 style={sectionTitleStyle}>Focus factor &amp; calibration</h2>
+        <div style={{ ...helpTextStyle, marginBottom: 'calc(var(--ring-unit) * 2)' }}>
+          <p style={{ marginTop: 0 }}>
+            The <strong>Focus factor</strong> is the share of raw capacity a team realistically
+            delivers (meetings, support and context-switching eat the rest). Planned capacity =
+            raw capacity × focus factor.
+          </p>
+          <p style={{ margin: 0 }}>
+            A brand-new team&rsquo;s first Sprint starts at <strong>75%</strong>. When a Sprint
+            finishes, the app measures its <em>observed</em> focus factor (completed original
+            effort ÷ raw capacity) and nudges the next Sprint&rsquo;s factor toward it:
+          </p>
+          <p
+            style={{
+              margin: 'calc(var(--ring-unit)) 0',
+              padding: 'calc(var(--ring-unit))',
+              background: 'var(--ring-secondary-background-color)',
+              borderRadius: 'var(--ring-border-radius)',
+              fontFamily: 'var(--ring-font-family-monospace, monospace)',
+            }}
+          >
+            next = previous + learningRate × (observed − previous)
+          </p>
+          <p style={{ margin: 0 }}>
+            <strong>Learning rate</strong> is how quickly it adapts: <em>0.1</em> reacts slowly and
+            stays stable across noisy Sprints; <em>0.5</em> tracks the latest Sprint closely. A
+            manager can always override the factor on any individual Sprint.
+          </p>
+        </div>
+        <div style={fieldBox}>
+          <Input
+            label="Learning rate (0–1)"
+            type="number"
+            min={0.05}
+            max={1}
+            step={0.05}
+            size={InputSize.M}
+            value={String(config.learningRate)}
+            error={problemFor('learningRate')}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              update('learningRate', Number(e.target.value))
+            }
+          />
         </div>
       </section>
 
       <section style={sectionStyle}>
         <h2 style={sectionTitleStyle}>Team</h2>
+        <p style={{ ...helpTextStyle, marginTop: 0 }}>
+          Add the people you plan capacity for. Everyone is full-time by default; set a lower
+          allocation for part-time members and their capacity scales down to match.
+        </p>
         <table style={{ width: '100%', borderCollapse: 'collapse' }} aria-label="Team participants">
           <thead>
             <tr>
               <th style={cellStyle} scope="col">
-                User id
+                Member
+              </th>
+              <th style={cellStyle} scope="col">
+                Allocation
               </th>
               <th style={cellStyle} scope="col">
                 Enabled
@@ -417,29 +560,41 @@ export function SettingsForm({ client: injected }: SettingsFormProps): React.JSX
           <tbody>
             {config.participants.length === 0 ? (
               <tr>
-                <td style={cellStyle} colSpan={4}>
-                  <span style={{ color: 'var(--ring-secondary-color)' }}>
-                    No participants yet. Add one below.
-                  </span>
+                <td style={{ ...cellStyle, color: 'var(--ring-secondary-color)' }} colSpan={5}>
+                  No team members yet — add people with the picker below.
                 </td>
               </tr>
             ) : (
               config.participants.map((p, index) => (
-                <tr key={`${p.userId}-${index}`}>
+                <tr key={p.userId}>
                   <td style={cellStyle}>
-                    <Input
-                      aria-label={`Participant ${index + 1} user id`}
-                      size={InputSize.M}
-                      value={p.userId}
-                      error={problemFor(`participants[${index}].userId`)}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                        updateParticipant(index, { userId: e.target.value })
-                      }
-                    />
+                    <div>{nameFor(p.userId)}</div>
+                    <div style={helpTextStyle}>{p.userId}</div>
+                  </td>
+                  <td style={cellStyle}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Input
+                        aria-label={`Allocation for ${nameFor(p.userId)} (percent)`}
+                        type="number"
+                        min={1}
+                        max={100}
+                        step={5}
+                        size={InputSize.S}
+                        value={String(Math.round((p.allocation ?? 1) * 100))}
+                        error={problemFor(`participants[${index}].allocation`)}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                          const pct = Number(e.target.value);
+                          updateParticipant(index, {
+                            allocation: Number.isFinite(pct) ? pct / 100 : p.allocation,
+                          });
+                        }}
+                      />
+                      <span aria-hidden>%</span>
+                    </div>
                   </td>
                   <td style={cellStyle}>
                     <Checkbox
-                      aria-label={`Participant ${index + 1} enabled`}
+                      aria-label={`${nameFor(p.userId)} enabled`}
                       checked={p.enabled}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                         updateParticipant(index, { enabled: e.target.checked })
@@ -448,7 +603,7 @@ export function SettingsForm({ client: injected }: SettingsFormProps): React.JSX
                   </td>
                   <td style={cellStyle}>
                     <Input
-                      aria-label={`Participant ${index + 1} note`}
+                      aria-label={`Note for ${nameFor(p.userId)}`}
                       size={InputSize.M}
                       value={p.note ?? ''}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
@@ -466,31 +621,30 @@ export function SettingsForm({ client: injected }: SettingsFormProps): React.JSX
             )}
           </tbody>
         </table>
-        <div style={{ display: 'flex', gap: 'var(--ring-unit)', marginTop: 'calc(var(--ring-unit) * 2)' }}>
-          <Input
-            label="Add participant by user id"
-            size={InputSize.M}
-            value={newParticipantId}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              setNewParticipantId(e.target.value)
-            }
-            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
-              if (e.key === 'Enter') addParticipant();
+        <div style={{ marginTop: 'calc(var(--ring-unit) * 2)', maxWidth: 360 }}>
+          <Select
+            data={addOptions}
+            selected={null}
+            label="Add a team member…"
+            filter
+            loading={userSearching}
+            onFilter={(q: string) => searchUsers(q)}
+            onSelect={(item) => {
+              const model = (item as { model?: UserSummary } | null)?.model;
+              if (model) addParticipant(model);
             }}
           />
-          <Button onClick={addParticipant} disabled={newParticipantId.trim().length === 0}>
-            Add
-          </Button>
         </div>
       </section>
 
       <section style={sectionStyle}>
         <h2 style={sectionTitleStyle}>Managers</h2>
         <p style={{ color: 'var(--ring-secondary-color)', margin: 0 }}>
-          {/* SPIKE: confirm host API — managers are derived from the project role/group
-              granting configuration rights; there is no managers list in ProjectConfig. */}
+          {/* KNOWN LIMITATION: the Capacity-Managers group is set via configuration/provisioning
+              (config.managersGroup); a dedicated group picker in this form is not yet built. */}
           Managers are the project members with configuration permission. They can edit all
-          capacity rows and Sprint details; other participants may edit only their own row.
+          capacity rows, assign issues and Sprint details; other participants may edit only their
+          own row.
         </p>
       </section>
 

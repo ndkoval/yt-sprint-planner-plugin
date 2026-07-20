@@ -57,15 +57,10 @@ const validConfig = {
   currentEffortField: 'Estimation',
   hoursPerDay: 8,
   sprintLengthDays: 14,
-  firstSprintStart: '2026-07-13',
   datePolicy: 'continuous',
   nameTemplate: 'AppGlass {year}-S{sequence}',
-  bootstrapFocusFactor: 0.7,
   learningRate: 0.2,
-  maxFactorStep: 0.03,
-  minFocusFactor: 0.1,
-  maxFocusFactor: 1,
-  participants: [{ userId: '1-1', enabled: true }],
+  participants: [{ userId: '1-1', enabled: true, allocation: 1 }],
 };
 
 describe('userIdSchema', () => {
@@ -194,16 +189,27 @@ describe('focusFactorOverrideSchema', () => {
 });
 
 describe('participantSchema', () => {
-  it('accepts a valid participant with and without a note', () => {
-    expect(participantSchema.safeParse({ userId: '1-1', enabled: true }).success).toBe(true);
+  it('accepts a valid participant, defaulting allocation to full-time', () => {
+    const parsed = participantSchema.parse({ userId: '1-1', enabled: true });
+    expect(parsed.allocation).toBe(1);
     expect(
-      participantSchema.safeParse({ userId: '1-1', enabled: false, note: 'x' }).success,
+      participantSchema.safeParse({ userId: '1-1', enabled: false, note: 'x', allocation: 0.5 })
+        .success,
     ).toBe(true);
   });
 
-  it('rejects extra fields (e.g. the removed allocation)', () => {
+  it('rejects an out-of-range allocation', () => {
     expect(
-      participantSchema.safeParse({ userId: '1-1', enabled: true, allocation: 1 }).success,
+      participantSchema.safeParse({ userId: '1-1', enabled: true, allocation: 0 }).success,
+    ).toBe(false);
+    expect(
+      participantSchema.safeParse({ userId: '1-1', enabled: true, allocation: 1.5 }).success,
+    ).toBe(false);
+  });
+
+  it('rejects unknown extra fields (strict)', () => {
+    expect(
+      participantSchema.safeParse({ userId: '1-1', enabled: true, bogus: 1 }).success,
     ).toBe(false);
   });
 });

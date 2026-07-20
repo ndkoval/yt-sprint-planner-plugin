@@ -84,6 +84,9 @@ export function CapacityTable({
             Load (committed / capacity)
           </th>
           <th style={headStyle} scope="col">
+            Remaining
+          </th>
+          <th style={headStyle} scope="col">
             Note
           </th>
           <th style={headStyle} scope="col">
@@ -167,6 +170,25 @@ export function CapacityTable({
                         {over ? ' ⚠ over' : ''}
                       </span>
                     </div>
+                  );
+                })()}
+              </td>
+              <td style={cellStyle}>
+                {(() => {
+                  // Remaining = available capacity − committed Original Effort (headroom).
+                  const committed = assignedEffort[row.userId]?.originalEffortMinutes ?? 0;
+                  const remaining = row.availableMinutes - committed;
+                  const over = remaining < 0;
+                  return (
+                    <span
+                      style={{
+                        color: over ? 'var(--ring-error-color, #c0341d)' : 'var(--ring-text-color)',
+                        fontWeight: over ? 'bold' : 'normal',
+                      }}
+                      title={over ? 'Over capacity' : 'Capacity left after committed work'}
+                    >
+                      {formatDaysValue(remaining, hoursPerDay)}
+                    </span>
                   );
                 })()}
               </td>

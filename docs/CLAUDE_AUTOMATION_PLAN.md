@@ -11,7 +11,7 @@ to this repository. Recommendations are advisory; implement the ones that fit yo
 - **Key libraries**: `zod` (runtime validation), `@jetbrains/ring-ui-built`, `react`,
   `esbuild` (bundling), `vitest` (unit/contract), `@playwright/test` + `@axe-core/playwright` (E2E/a11y).
 - **Structure**: `src/domain` (pure calc), `src/backend` (handlers/services/repositories),
-  `src/workflows` (YT rules), `src/widgets` (UI); `tests/{unit,contract,integration,real-youtrack,e2e}`.
+  `src/workflows` (YT rules), `src/widgets` (UI); `tests/{unit,contract,integration,youtrack,e2e}`.
 - **Correctness-critical core**: `src/domain/**` (capacity/effort/focus-factor math) — held to 95% coverage.
 
 ---
@@ -26,7 +26,7 @@ is a place to confirm the real API shape via context7.
 **Activate**: `/reload-plugins`.
 
 ### Playwright (installed)
-**Why**: `tests/e2e` drives the real widgets in a real YouTrack. Use the Playwright MCP to
+**Why**: `tests/e2e` drives the real widgets in a YouTrack. Use the Playwright MCP to
 explore the actual embedded-widget DOM and replace the best-effort selectors marked
 `// SPIKE` in the E2E specs with verified ones.
 
@@ -39,7 +39,7 @@ explore the actual embedded-widget DOM and replace the best-effort selectors mar
 API limits, Ring UI conventions, packaging/installation, and migrations so every agent
 follows the same verified rules. Invocation: **both**.
 
-### `real-youtrack-testing` (project-local — created)
+### `youtrack-testing` (project-local — created)
 **Why**: Encodes the no-Docker local-instance provisioning, isolation naming, cleanup and
 safety guards so integration runs are reproducible and never touch production. Invocation: **both**.
 

@@ -15,7 +15,7 @@
     `jetbrains/youtrack:2024.3.148430`.
   - The **native YouTrack board** works on the standalone **2024.1.34109** build, which
     boots locally on arm64 with no Docker (bundled mac-x64 JRE under Rosetta). See
-    `scripts/provision-real-youtrack.mjs` and [[real-yt-no-docker]].
+    `scripts/provision-youtrack.mjs` and [[real-yt-no-docker]].
   - A real remote/Cloud instance is also acceptable.
 - If a real YouTrack genuinely cannot be brought up in the current environment, that is a
   **blocker to surface to the user** — not something to paper over with a stub. State the

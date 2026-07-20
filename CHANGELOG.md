@@ -2,26 +2,85 @@
 
 All notable changes to the Sprint Capacity Planner are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0] — 2026-07-19
 
-### Real YouTrack demos + integration
+First tagged release. Ships the app package (`dist/sprint-capacity-planner.zip`), the
+drag-and-drop planning board, part-time allocations, and the two demo reels (install &
+walkthrough) recorded against a real YouTrack in Docker.
 
-- **Demos now run against a REAL YouTrack.** New `tests/e2e/real-demo` suite drives the app
+
+### Drag-and-drop planning board + configurable backlog
+
+- **Planning board with a backlog.** The planner's "Plan work" section is now a drag-and-drop
+  board: a **Backlog** lane (a configurable YouTrack search — new `ProjectConfig.backlogQuery`),
+  an **Unassigned · in sprint** lane, and one **timeline lane per teammate** sized to their
+  available capacity. Drag a backlog card onto a teammate to pull it into the Sprint *and*
+  assign it in one move; drag onto Unassigned to add it without an owner; drag back to the
+  backlog to remove it. New backend: `GET /sprints/:id/backlog`, `POST /sprints/:id/issues/:issueId/plan`,
+  client `searchIssues` / `addIssueToSprint` / `removeIssueFromSprint`, and `Issue.Update`
+  scope. Covered by `tests/contract/planning.test.ts`.
+- **Over-capacity highlighting.** A Sprint-level bar flags when total committed work
+  (including still-unassigned issues) exceeds planned capacity — even when no single person
+  is over — and each lane turns red when that person is over their available days. The
+  capacity table gains a per-person **Remaining** column.
+- **Part-time allocations.** `Participant.allocation` (1 = full-time) scales a person's
+  default capacity; set per teammate in settings.
+- **Reach the planner from more places.** Added `ISSUE_OPTIONS_MENU_ITEM` (open the planner
+  from a board card / issue) and `DASHBOARD_WIDGET` entry points (both validated on 2025.3),
+  alongside the existing project-settings tab. (YouTrack exposes no board/sprint extension
+  point, so the native sprint-edit dialog can't be replaced — a platform limitation.)
+
+### Settings overhaul
+
+- **Native pickers + clearer config.** Add teammates with a **user picker** (not a raw id);
+  pick the Original/Current **effort fields from the project's custom fields** (not free
+  text); the "Sprint length (days)" label no longer wraps.
+- **Simpler focus factor.** Removed `firstSprintStart` (a new team's first Sprint starts
+  today), `bootstrapFocusFactor`/`minFocusFactor`/`maxFocusFactor`/`maxFactorStep`. New
+  Sprints start at a fixed **0.75** and calibrate by `learningRate` alone
+  (`next = prev + α·(observed − prev)`, clamped to 0–1); a manager can override per Sprint.
+  The algorithm is now explained inline in settings.
+
+### Naming
+
+- **Dropped the "real" qualifier** now that the only demo *is* real: `tests/e2e/real-demo` →
+  `tests/e2e/demo`, `tests/real-youtrack` → `tests/youtrack`, the `*-real-youtrack.mjs` /
+  `provision-real-demo.mjs` scripts and `demo:real*` / `*:real-youtrack` / `test:integration:real`
+  npm scripts renamed to drop "real", reel titles/paths de-qualified.
+
+### Single tab, new icon, demos
+
+- **One "Sprint Capacity" tab.** The app now exposes a single project widget instead of two
+  (planner + separate settings). Managers configure the app in-place via a **Settings**
+  button that swaps the planner for the configuration form (with a "Back to planner"
+  control); a manager-only **Configure** action also appears on the empty state before the
+  app is set up. The stand-alone `project-settings` widget entry point was removed
+  (`SettingsForm` is now embedded in the planner).
+- **New app icon.** Replaced the plain three-bar mark with an indigo capacity-gauge badge
+  (light + dark variants).
+- **Removed all non-real demos.** The mock demo suite (`tests/e2e/demo`), its in-memory
+  harness (`tests/e2e/harness`, `scripts/serve-demo.mjs`, `playwright.demo.config.ts`) and
+  the mock-only npm scripts (`demo:serve`, `test:e2e:demo`, `demo:reels`,
+  `test:e2e:analyze`) are gone. Only the YouTrack demo suite remains. The generic
+  recording helpers moved to `tests/e2e/shared` (`cursor.ts`, `recording.ts`).
+
+### YouTrack demos + integration
+
+- **Demos now run against a YouTrack.** New `tests/e2e/demo` suite drives the app
   installed inside a live YouTrack (Docker 2025.3) — the actual app widgets (in their
   iframe) and the **native YouTrack Kanban board** — and records four narrated 720p reels
-  (walkthrough, team capacity, configuration, native board). `npm run demo:real`
+  (walkthrough, team capacity, configuration, native board). `npm run demo`
   provisions the instance, records, renders, and QAs via the demo-video-review skill (all
   reels ✅ APPROVE).
 - **Removed the custom board stub.** The hand-built `boardStubHtml` / `/agiles` mock board
-  is gone; the native board is shown only from the real instance. The mock demo suite now
-  drives the app's own widgets only (demo `08-sprint-navigation` removed).
-- **The app now actually runs inside real YouTrack.** Fixed the Apps-SDK integration that
+  is gone; the native board is shown only from the instance.
+- **The app now actually runs inside YouTrack.** Fixed the Apps-SDK integration that
   was previously stubbed: HTTP handler discovery + shape, module load (no Node globals),
   the `@jetbrains/youtrack-scripting-api/http` transport, extension-property persistence
   (via `AppGlobalStorage`), group-membership lookup, a configurable managers group, and a
   first-run config bootstrap. Provisioning/seeding scripts:
-  `provision-real-youtrack.mjs` (boots 2024.1 standalone on arm64; 2025.3 via Docker),
-  `install-app-real-youtrack.mjs`, `setup-real-youtrack-demo.mjs`, `provision-real-demo.mjs`.
+  `provision-youtrack.mjs` (boots 2024.1 standalone on arm64; 2025.3 via Docker),
+  `install-app-youtrack.mjs`, `setup-youtrack-demo.mjs`, `provision-demo.mjs`.
 
 
 ### Added (Jira-aligned planning)
@@ -84,16 +143,16 @@ All notable changes to the Sprint Capacity Planner are documented here. The form
 
 ### Platform notes
 
-- **Real-YouTrack integration on Apple-Silicon macOS is not supported** by the standalone (no-Docker) build: YouTrack 2025.1 bundles GraalVM/Truffle 22.0.0.2, whose JS scripting engine cannot initialise on arm64 (verified on JDK 8/11/17/21/25 and the bundled JRE under Rosetta — all crash on `sun.misc.Unsafe.ensureClassInitialized`). The headless provisioning + wizard bootstrap in [`scripts/provision-real-youtrack.mjs`](scripts/provision-real-youtrack.mjs) is fully implemented and verified up to that point; run real integration on Linux x64 (CI). The demo E2E suite covers the plugin UI end-to-end everywhere.
+- **Real-YouTrack integration on Apple-Silicon macOS is not supported** by the standalone (no-Docker) build: YouTrack 2025.1 bundles GraalVM/Truffle 22.0.0.2, whose JS scripting engine cannot initialise on arm64 (verified on JDK 8/11/17/21/25 and the bundled JRE under Rosetta — all crash on `sun.misc.Unsafe.ensureClassInitialized`). The headless provisioning + wizard bootstrap in [`scripts/provision-youtrack.mjs`](scripts/provision-youtrack.mjs) is fully implemented and verified up to that point; run real integration on Linux x64 (CI). The demo E2E suite covers the plugin UI end-to-end everywhere.
 
 ### Known SPIKE follow-ups
 
-These integration points are isolated behind `// SPIKE` markers and must be verified/wired against a real YouTrack instance:
+These integration points are isolated behind `// SPIKE` markers and must be verified/wired against a YouTrack instance:
 
 - **SDK extension-property read/write wiring** — `getExtensionProperties` / `setExtensionProperties` in [`src/backend/repositories/youtrack-http-client.ts`](src/backend/repositories/youtrack-http-client.ts) are stubs (reads return `null`, writes no-op); the workflow accessors in [`src/workflows/workflow-common.js`](src/workflows/workflow-common.js) assume `entity.extensionProperties[name]`.
 - **Board-permission check** — `canManageBoard` is a placeholder ("board is readable"); the real sprint create/update permission query is unverified.
 - **Host bridge** — the widget↔host API in [`src/widgets/api-client.ts`](src/widgets/api-client.ts) (`YTApp.register`, `host.fetchApp`, project/user id sources, app base path).
-- **YouTrack distribution URL** — pinned build, download URL, and launch flags in [`scripts/provision-real-youtrack.mjs`](scripts/provision-real-youtrack.mjs).
+- **YouTrack distribution URL** — pinned build, download URL, and launch flags in [`scripts/provision-youtrack.mjs`](scripts/provision-youtrack.mjs).
 - **Real E2E selectors** — the live-YouTrack specs under [`tests/e2e`](tests/e2e) (excluding [`tests/e2e/demo`](tests/e2e/demo), which uses verified selectors) use placeholder selectors pending a live UI.
 
 Additional unfinished wiring: no API route sets the `scpCapacityManagers` group yet; `reconciliationCron` in [`settings.json`](settings.json) is defined but the reconciliation workflow hardcodes its cron; `scpConfigVersion` is declared but unused (config version lives inside the JSON).
@@ -109,9 +168,9 @@ Additional unfinished wiring: no API route sets the `scpCapacityManagers` group 
 - **Workflows** ([`src/workflows`](src/workflows)) — six modules (issue-metrics, sprint-membership, issue-removal, completed-sprint, scheduled reconciliation, availability reminder) performing snapshot-based incremental updates that never block issue edits.
 - **Ring UI widgets** ([`src/widgets`](src/widgets)) — the Sprint Capacity project tab and the Sprint Capacity Settings form, with a typed API client and isolated host bridge.
 - **Build & pack** ([`scripts`](scripts)) — esbuild-based backend/widget builds, static-file assembly into `dist/`, and a pure-Node ZIP writer producing `dist/sprint-capacity-planner.zip`.
-- **Local-YouTrack harness** — no-Docker provision/seed/cleanup scripts with destructive + production-URL safety gates and run-id isolation, plus a self-skipping real-integration vitest suite.
+- **Local-YouTrack harness** — no-Docker provision/seed/cleanup scripts with destructive + production-URL safety gates and run-id isolation, plus a self-skipping integration vitest suite.
 - **Playwright E2E scaffolding** ([`tests/e2e`](tests/e2e)) — persona fixtures, critical/regression projects with the video/trace/screenshot capture policy, axe accessibility checks, and a video/contact-sheet integrity analyzer.
-- **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) — fast lane (lint/typecheck/unit/contract/build/pack + package upload) and an opt-in, gated real-YouTrack lane.
+- **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) — fast lane (lint/typecheck/unit/contract/build/pack + package upload) and an opt-in, gated YouTrack lane.
 - **Documentation** — [`README.md`](README.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`WORKFLOWS.md`](WORKFLOWS.md), [`DATA_MODEL.md`](DATA_MODEL.md), [`TESTING.md`](TESTING.md), and [`SECURITY.md`](SECURITY.md).
 
 [Unreleased]: https://example.com/appglass/sprint-capacity-planner/compare/v0.1.0...HEAD

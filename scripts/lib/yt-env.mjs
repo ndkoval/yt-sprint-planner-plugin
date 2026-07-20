@@ -1,6 +1,6 @@
 /**
  * Shared env parsing, safety guards, and a fetch-based YouTrack REST client for the
- * real-YouTrack integration harness. Mirrors FetchRestConnection in
+ * YouTrack integration harness. Mirrors FetchRestConnection in
  * src/backend/repositories/youtrack-http-client.ts (Bearer token, JSON, /api paths).
  *
  * SAFETY: destructive provisioning/seeding/cleanup only proceeds when
@@ -29,7 +29,7 @@ export function assertDestructiveAllowed(log) {
   if (!env.allowDestructive) {
     throw new Error(
       'Refusing to run: destructive operations require YT_TEST_ALLOW_DESTRUCTIVE=true. ' +
-        'This gate protects against accidental provisioning/cleanup against a real instance.',
+        'This gate protects against accidental provisioning/cleanup against a YouTrack instance.',
     );
   }
   log.info('destructive operations allowed (YT_TEST_ALLOW_DESTRUCTIVE=true)');

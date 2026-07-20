@@ -84,6 +84,9 @@ export const participantSchema = z
   .object({
     userId: userIdSchema,
     enabled: z.boolean(),
+    // Availability as a fraction of full-time. Full-time (1) by default so older configs
+    // and simple setups need not specify it.
+    allocation: z.number().gt(0).lte(1).default(1),
     note: z.string().optional(),
   })
   .strict();
@@ -96,22 +99,15 @@ export const projectConfigSchema = z
     currentEffortField: z.string().min(1),
     hoursPerDay: z.number().positive(),
     sprintLengthDays: z.number().int().positive(),
-    firstSprintStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected yyyy-mm-dd'),
     datePolicy: z.literal('continuous'),
     nameTemplate: z.string().min(1),
-    bootstrapFocusFactor: z.number().gt(0).lte(1),
+    // The backlog search query (may be empty to disable the backlog lane).
+    backlogQuery: z.string().default(''),
     learningRate: z.number().gt(0).lte(1),
-    maxFactorStep: z.number().gt(0).lte(1),
-    minFocusFactor: z.number().gt(0).lt(1),
-    maxFocusFactor: z.number().gt(0).lte(1),
     participants: z.array(participantSchema),
     managersGroup: z.string().min(1).optional(),
   })
-  .strict()
-  .refine((c) => c.minFocusFactor < c.maxFocusFactor, {
-    message: 'minFocusFactor must be < maxFocusFactor',
-    path: ['minFocusFactor'],
-  });
+  .strict();
 
 // Compile-time guarantee that each schema is assignable TO its hand-written type.
 // `AssignableTo` normalises `prop?: T | undefined` (how zod infers optionals) against

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Button from '@jetbrains/ring-ui-built/components/button/button';
 import Select from '@jetbrains/ring-ui-built/components/select/select';
-import type { SprintSummary, SprintView, PatchCapacityRequest } from '../../shared/api';
+import type { SprintSummary, SprintView, PatchCapacityRequest, IssueView } from '../../shared/api';
 import type { ProjectConfig } from '../../shared/types';
 import { daysToMinutes } from '../../shared/units';
 import { ApiClient, ApiClientError } from '../api-client';
@@ -19,6 +19,8 @@ import { ConflictBanner } from '../components/ConflictBanner';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorState } from '../components/ErrorState';
+import { SprintPlanningBoard } from '../components/SprintPlanningBoard';
+import { SettingsForm } from '../project-settings/SettingsForm';
 import type { CreateNextSprintRequest, OverrideFocusFactorRequest } from '../../shared/api';
 
 export interface SprintCapacityTabProps {
@@ -35,17 +37,21 @@ function addDays(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 /**
  * Preview the next Sprint. It is always computed from the LATEST managed Sprint (max
  * sequence), NOT the currently-selected one, because the backend creates the next
  * Sprint after the latest regardless of UI selection. With no managed Sprints yet, it
- * previews the first Sprint from the configured start date.
+ * previews the first Sprint starting today (the backend does the same).
  */
 function computePreview(
   config: ProjectConfig,
   latest: { finish: string; sequence: number } | null,
 ): NextSprintPreview {
-  const start = latest ? addDays(latest.finish, 1) : config.firstSprintStart;
+  const start = latest ? addDays(latest.finish, 1) : todayIso();
   const finish = addDays(start, Math.max(0, config.sprintLengthDays - 1));
   const nextSequence = (latest?.sequence ?? 0) + 1;
   // Mirror the backend renderSprintName placeholders exactly ({year}/{sequence}/
@@ -90,10 +96,17 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
   const [isManager, setIsManager] = useState(false);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  // The settings UI is embedded here (managers only) so the app exposes a single
+  // project tab rather than a separate "settings" tab. 'settings' shows the config form.
+  const [view, setView] = useState<'planner' | 'settings'>('planner');
 
   const [sprints, setSprints] = useState<SprintSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sprint, setSprint] = useState<SprintView | null>(null);
+
+  const [issues, setIssues] = useState<IssueView[]>([]);
+  const [backlog, setBacklog] = useState<IssueView[]>([]);
+  const [assigningIssueIds, setAssigningIssueIds] = useState<ReadonlySet<string>>(new Set());
 
   const [drafts, setDrafts] = useState<Record<string, RowDraft>>({});
   const [savingUserIds, setSavingUserIds] = useState<ReadonlySet<string>>(new Set());
@@ -114,6 +127,19 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
       const view = await client.getSprint(id);
       setSprint(view);
       if (clearDrafts) setDrafts({});
+      // Load the Sprint's issues + the backlog for the planning board (best-effort; the
+      // planner still works if these fail, e.g. on a permission hiccup).
+      try {
+        const [sprintIssues, backlogIssues] = await Promise.all([
+          client.listSprintIssues(id),
+          client.listBacklog(id).catch(() => [] as IssueView[]),
+        ]);
+        setIssues(sprintIssues);
+        setBacklog(backlogIssues);
+      } catch {
+        setIssues([]);
+        setBacklog([]);
+      }
     },
     [client],
   );
@@ -353,17 +379,82 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
 
   const openBoard = useCallback((): void => {
     if (config === null) return;
-    // SPIKE: confirm host API — native board URL. Falls back to a same-origin path.
+    // Open the native agile board in a new tab (the widget's sandboxed iframe blocks top-frame
+    // navigation, so window.open is the reliable path). Confirmed on YouTrack 2025.3.
     window.open(`/agiles/${encodeURIComponent(config.boardId)}`, '_blank', 'noopener');
   }, [config]);
 
+  // Plan an issue by dragging it on the board: pull into/out of the Sprint + set assignee.
+  // The backend returns the reconciled SprintView so per-person Load/Remaining refresh
+  // immediately; we also reload the Sprint issues + the backlog.
+  const planIssue = useCallback(
+    (issueId: string, target: { inSprint: boolean; assigneeId: string | null }): void => {
+      if (sprint === null) return;
+      const sprintId = sprint.id;
+      setAssigningIssueIds((prev) => new Set(prev).add(issueId));
+      setActionError(null);
+      client
+        .planIssue(sprintId, issueId, target)
+        .then(async (updated) => {
+          setSprint(updated);
+          const [iss, bl] = await Promise.all([
+            client.listSprintIssues(sprintId),
+            client.listBacklog(sprintId).catch(() => backlog),
+          ]);
+          setIssues(iss);
+          setBacklog(bl);
+        })
+        .catch((err: unknown) => setActionError(err))
+        .finally(() =>
+          setAssigningIssueIds((prev) => {
+            const next = new Set(prev);
+            next.delete(issueId);
+            return next;
+          }),
+        );
+    },
+    [sprint, client, backlog],
+  );
+
+  // Double-click a card: open the issue in a POP-UP showing YouTrack's native issue view (full
+  // details + editable Original/Current Effort) — without navigating away to the Kanban board.
+  // App widgets run in a sandboxed iframe (opaque origin) where top-frame navigation is blocked,
+  // so we open a popup window at /issue/{idReadable} (window.open is permitted from the iframe).
+  const openIssuePopup = useCallback((issue: IssueView): void => {
+    const url = `/issue/${encodeURIComponent(issue.idReadable)}`;
+    window.open(url, `scp-issue-${issue.idReadable}`, 'popup,width=1040,height=880,noopener');
+  }, []);
+
+  // Leaving the embedded settings panel: return to the planner and reload so any
+  // configuration change (board, fields, participants) is reflected immediately.
+  const closeSettings = useCallback((): void => {
+    setView('planner');
+    void load();
+  }, [load]);
+
   if (status === 'loading') return <LoadingState message="Loading Sprint capacity…" />;
   if (status === 'error') return <ErrorState error={loadError} onRetry={() => void load()} />;
+  // Managers configure the app in-place (single-tab design); the form has its own
+  // "Back to planner" control that calls closeSettings.
+  if (view === 'settings' && isManager) {
+    return <SettingsForm client={client} onClose={closeSettings} />;
+  }
   if (!configured) {
     return (
       <EmptyState
         title="Not configured yet"
-        description="An administrator needs to set up the Sprint Capacity Planner in project settings before this tab can be used."
+        description={
+          isManager
+            ? 'Set up the board, effort fields and team to start planning Sprint capacity.'
+            : 'A project manager needs to set up the Sprint Capacity Planner before this tab can be used.'
+        }
+        action={
+          isManager ? (
+            <Button primary onClick={() => setView('settings')}>
+              Configure
+            </Button>
+          ) : undefined
+        }
       />
     );
   }
@@ -407,6 +498,11 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
         <Button onClick={openBoard} disabled={config === null}>
           Open board
         </Button>
+        {isManager ? (
+          <Button onClick={() => setView('settings')} title="Configure the Sprint Capacity Planner">
+            Settings
+          </Button>
+        ) : null}
       </header>
 
       {conflict !== null ? (
@@ -456,6 +552,26 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
           </section>
 
           <section style={sectionStyle}>
+            <h2 style={sectionTitleStyle}>Plan work — drag issues onto the team</h2>
+            <SprintPlanningBoard
+              sprintIssues={issues}
+              backlogIssues={backlog}
+              lanes={rows.map((r) => ({
+                userId: r.userId,
+                name: r.displayNameSnapshot || r.loginSnapshot,
+                availableMinutes: r.availableMinutes,
+              }))}
+              plannedCapacityMinutes={sprint.plannedCapacityMinutes}
+              hoursPerDay={hoursPerDay}
+              isManager={isManager}
+              backlogConfigured={(config?.backlogQuery ?? '').trim().length > 0}
+              busyIssueIds={assigningIssueIds}
+              onPlan={planIssue}
+              onOpenIssue={openIssuePopup}
+            />
+          </section>
+
+          <section style={sectionStyle}>
             <div
               style={{
                 display: 'flex',
@@ -501,8 +617,6 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
         <FocusFactorOverrideDialog
           show={showOverride}
           currentValue={sprint.focusFactor}
-          minFocusFactor={config.minFocusFactor}
-          maxFocusFactor={config.maxFocusFactor}
           saving={overriding}
           onCancel={() => setShowOverride(false)}
           onSubmit={overrideFocusFactor}

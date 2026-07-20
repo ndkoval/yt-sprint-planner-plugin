@@ -1,12 +1,21 @@
 /**
  * Focus Factor calibration. See §11.
  *
- * The Focus Factor is a learned multiplier applied to Raw Capacity to produce
- * Planned Capacity. The first Sprint uses a bootstrap value; each subsequent Sprint
- * nudges toward the previous Sprint's Observed Focus Factor, bounded by a learning
- * rate, a per-Sprint maximum step, and hard min/max clamps.
+ * The Focus Factor is a learned multiplier (0–1) applied to Raw Capacity to produce
+ * Planned Capacity. A brand-new team's first Sprint starts at {@link DEFAULT_FOCUS_FACTOR};
+ * each subsequent Sprint nudges toward the previous Sprint's Observed Focus Factor by a
+ * fraction (the learning rate). A manager can override the value on any Sprint.
+ *
+ * The algorithm, in one line:
+ *   nextFactor = clamp01( previousFactor + learningRate × (observed − previousFactor) )
  */
 import type { FocusFactorSettings, FocusFactorSource } from '../../shared/types.js';
+
+/**
+ * Focus Factor a fresh Sprint starts from when there is no completed Sprint to learn from
+ * (no min/max bounds are configured — a manager simply edits the value if needed).
+ */
+export const DEFAULT_FOCUS_FACTOR = 0.75;
 
 /** Clamp x into [lo, hi]. */
 export function clamp(x: number, lo: number, hi: number): number {
@@ -33,9 +42,9 @@ export function observedFocusFactor(
   return completedOriginalEffortMinutes / rawCapacityMinutes;
 }
 
-/** The first Sprint always uses the bootstrap factor. */
-export function bootstrapFocusFactor(settings: FocusFactorSettings): FocusFactorResult {
-  return { value: settings.bootstrapFocusFactor, source: 'bootstrap' };
+/** A Sprint with no completed predecessor starts at the fixed default factor. */
+export function bootstrapFocusFactor(): FocusFactorResult {
+  return { value: DEFAULT_FOCUS_FACTOR, source: 'bootstrap' };
 }
 
 /**
@@ -59,26 +68,22 @@ export interface CalibrationInput {
  * Compute the next Focus Factor from the previous Sprint (§11.3).
  *
  * When `carryForward` is set (or `observed` is null), the previous factor is carried
- * forward unchanged with source `carried-forward`. Otherwise:
+ * forward unchanged with source `carried-forward`. Otherwise it moves a `learningRate`
+ * fraction of the way from the previous factor toward the observed factor, clamped to the
+ * natural [0, 1] range of a factor:
  *
- *   boundedObservation = clamp(O, min, max)
- *   adjustment         = clamp(α × (boundedObservation − P), −M, +M)
- *   newFactor          = clamp(P + adjustment, min, max)
+ *   newFactor = clamp01( P + α × (O − P) )
  */
 export function nextFocusFactor(
   input: CalibrationInput,
   settings: FocusFactorSettings,
 ): FocusFactorResult {
-  const { minFocusFactor: min, maxFocusFactor: max } = settings;
-
   if (input.carryForward || input.observed === null) {
-    // Carry forward, but still respect the configured bounds.
-    return { value: clamp(input.previousFactor, min, max), source: 'carried-forward' };
+    return { value: clamp(input.previousFactor, 0, 1), source: 'carried-forward' };
   }
 
-  const boundedObservation = clamp(input.observed, min, max);
-  const rawAdjustment = settings.learningRate * (boundedObservation - input.previousFactor);
-  const adjustment = clamp(rawAdjustment, -settings.maxFactorStep, settings.maxFactorStep);
-  const value = clamp(input.previousFactor + adjustment, min, max);
+  const observation = clamp(input.observed, 0, 1);
+  const adjustment = settings.learningRate * (observation - input.previousFactor);
+  const value = clamp(input.previousFactor + adjustment, 0, 1);
   return { value, source: 'calculated' };
 }

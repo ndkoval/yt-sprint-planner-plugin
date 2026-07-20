@@ -1,12 +1,11 @@
 /**
  * build:backend — bundle the backend entry point into dist/backend/index.js.
  *
- * SPIKE: confirm backend module format. YouTrack Apps run the backend inside a
- * server-side JS runtime (Rhino/Nashorn-style per the Apps SDK). CommonJS (`cjs`)
- * with `exports.httpHandler` is the safest assumption for that runtime, and
- * src/backend/index.ts already assigns `export const httpHandler` which esbuild
- * lowers to `exports.httpHandler` under cjs. If the SDK turns out to require ESM,
- * flip `format` to 'esm' here — nothing else in the pipeline depends on it.
+ * Backend module format: CommonJS (`cjs`). Verified on real YouTrack 2025.3 — the bundled
+ * handler loads and runs inside YouTrack's backend sandbox (POSTing an envelope to
+ * /api/extensionEndpoints/<app>/backend/api returns our router's own {status,body}). The SDK
+ * does not require ESM. `src/backend/index.ts` assigns `export const httpHandler`, which esbuild
+ * lowers to `exports.httpHandler` under cjs; zod is bundled so the backend has no runtime deps.
  *
  * zod is bundled in (not marked external) so the backend has no runtime deps.
  */

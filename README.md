@@ -1,13 +1,22 @@
 # Sprint Capacity Planner
 
-A YouTrack App that adds **capacity planning, computed delivery metrics, and a one-click "create next Sprint" button** on top of *native* YouTrack Sprints. The native Sprint stays the single source of truth for membership; this app only layers planning data and calculations over it.
+> Capacity planning, computed delivery metrics, and one-click next-Sprint — layered on **native** YouTrack Sprints.
 
-- **Package name:** `sprint-capacity-planner`
-- **Version:** `0.1.0`
-- **Vendor:** AppGlass
-- **Scopes:** `Agile.Read`, `Agile.Update`, `Issue.Read`, `Project.Read` (see [`manifest.json`](manifest.json))
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![CI](https://github.com/ndkoval/yt-sprint-planner-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/ndkoval/yt-sprint-planner-plugin/actions/workflows/ci.yml)
+[![YouTrack 2024.3+](https://img.shields.io/badge/YouTrack-2024.3%2B-2CAEF0.svg)](https://www.jetbrains.com/youtrack/)
 
-> **Status:** the domain, backend, workflows, widgets, build/pack, and test harnesses are implemented. A number of YouTrack SDK integration points are still marked `// SPIKE` and must be verified against a real instance before production use — see [Known SPIKEs](#known-spikes) and [`CHANGELOG.md`](CHANGELOG.md).
+A YouTrack App that adds **capacity planning, computed delivery metrics, and a one-click "create next Sprint" button** on top of *native* YouTrack Sprints. The native Sprint stays the single source of truth for membership — the app only layers planning data and calculations over it, so your board, issues, and fields are never forked or duplicated.
+
+## See it in action
+
+[![Watch the demo](docs/media/demo-poster.png)](docs/media/demo.mp4)
+
+**▶ [Watch the demo](docs/media/demo.mp4)** — add the app to a project and configure it, then plan a Sprint on the drag-and-drop board (leaving work unassigned or sending it back to the backlog) and open any card in YouTrack's own issue view.
+
+Prefer them separately: **[Install & configure](docs/media/install.mp4)** · **[Walkthrough](docs/media/walkthrough.mp4)**. _(The videos are recorded automatically against a real YouTrack and published from the latest run — see [Demos & reels](#demos--reels).)_
+
+> 📦 **JetBrains Marketplace:** _listing coming soon_ — the Marketplace install link will be added here.
 
 ---
 
@@ -42,27 +51,29 @@ For how these concepts map onto Jira's sprint model (Original Effort ↔ committ
 ## Supported YouTrack
 
 - **Minimum version:** `2024.3` (`minYouTrackVersion` in [`manifest.json`](manifest.json)).
-- **Cloud & Server:** the app is a standard packaged YouTrack App and targets both. The **real-instance test harness** ([`scripts/`](scripts/)) only stands up a *local, disposable* Server instance and hard-blocks Cloud/production URLs — it is for testing, not deployment.
+- **Cloud & Server:** the app is a standard packaged YouTrack App and targets both. The **instance test harness** ([`scripts/`](scripts/)) only stands up a *local, disposable* Server instance and hard-blocks Cloud/production URLs — it is for testing, not deployment.
 
 ---
 
-## Installation
+## Install
 
-Requires Node.js **≥ 20**.
+**From JetBrains Marketplace** — _coming soon_ (the listing link will be added here).
+
+**From a packaged ZIP** (a GitHub release asset, or one you build yourself):
+
+1. In YouTrack, go to **Administration → Apps → Import app** and upload `sprint-capacity-planner.zip`.
+2. **Attach the app to a project** whose Sprints you want to plan (Project settings → **Apps**).
+3. Open the project's **Sprint Capacity** tab → **Settings** and configure it ([below](#configuration)).
+
+To build the ZIP yourself (Node.js **≥ 20**):
 
 ```bash
 npm ci
-npm run build      # -> dist/  (backend, widgets, workflows, manifest, entity-extensions, settings)
-npm run pack       # -> dist/sprint-capacity-planner.zip
+npm run build   # -> dist/  (backend, widgets, workflows, manifest, entity-extensions, settings)
+npm run pack    # -> dist/sprint-capacity-planner.zip
 ```
 
-Then, in YouTrack:
-
-1. Install the ZIP at **Administration → Apps → Import app** (upload `dist/sprint-capacity-planner.zip`).
-2. **Attach the app to a project** whose Sprints you want to plan.
-3. Open the project's **Sprint Capacity Settings** and configure it (below).
-
-`npm run build` runs `clean → build-backend → build-widgets → copy manifest/entity-extensions/settings/workflows/assets` (see [`scripts/build.mjs`](scripts/build.mjs)). `npm run pack` zips `dist/` with a pure-Node writer (see [`scripts/pack.mjs`](scripts/pack.mjs)).
+`npm run build` runs `clean → build-backend → build-widgets → copy manifest/entity-extensions/settings/workflows/assets` (see [`scripts/build.mjs`](scripts/build.mjs)). `npm run pack` zips `dist/` with a pure-Node writer (see [`scripts/pack.mjs`](scripts/pack.mjs)). Every CI run also publishes the ZIP as a build artifact.
 
 ---
 
@@ -197,12 +208,12 @@ Managers can export a versioned JSON bundle (`GET /export`) and re-import it (`P
 
 See [`TESTING.md`](TESTING.md) for the full pyramid. Commands (from [`package.json`](package.json)):
 
-| Command | What it runs | Needs a real instance? |
+| Command | What it runs | Needs a YouTrack instance? |
 | --- | --- | --- |
 | `npm run test:unit` | Domain unit tests (`tests/unit`) | no |
 | `npm run test:contract` | Backend contract tests against the fake transport (`tests/contract`) | no |
 | `npm run coverage` | Unit + contract with V8 coverage | no |
-| `npm run test:integration:real` | Provision → seed → run `tests/real-youtrack` → cleanup | **yes** (local, gated) |
+| `npm run test:integration` | Provision → seed → run `tests/youtrack` → cleanup | **yes** (local, gated) |
 | `npm run test:e2e` | Playwright suite (`tests/e2e`) | **yes** (self-skips otherwise) |
 | `npm run test:e2e:analyze` | Video/trace integrity + contact sheets + `artifacts/ui-analysis.md` | no (analyses artifacts) |
 | `npm run test:all` | lint → typecheck:all → unit → contract → build | no |
@@ -225,16 +236,40 @@ See [`TESTING.md`](TESTING.md) for the full pyramid. Commands (from [`package.js
 
 ---
 
-## Known SPIKEs
+## Demos & reels
 
-These need real-YouTrack verification before production (grep `// SPIKE` under `src/`; see [`CHANGELOG.md`](CHANGELOG.md) → *Unreleased*):
+The demo videos at the top are produced automatically, never hand-edited:
 
-- **Extension-property read/write wiring** — [`src/backend/repositories/youtrack-http-client.ts`](src/backend/repositories/youtrack-http-client.ts) `getExtensionProperties`/`setExtensionProperties` are stubs (reads return `null`, writes no-op), so the *real* backend does not yet persist. Workflow SDK access in [`src/workflows/workflow-common.js`](src/workflows/workflow-common.js) is likewise assumed.
-- **Board-permission check** — `canManageBoard` currently returns "board is readable"; the real permission query is unverified.
-- **Host bridge** — the widget↔host API (`YTApp.register`, `fetchApp`, project/user id, base path) in [`src/widgets/api-client.ts`](src/widgets/api-client.ts).
-- **YouTrack distribution URL** — pinned build/URL/launch flags in [`scripts/provision-real-youtrack.mjs`](scripts/provision-real-youtrack.mjs).
-- **Real E2E selectors** — the Playwright specs use placeholder selectors pending a live UI.
+1. A fixed, prepared data set is seeded on a **real** YouTrack (`npm run demo:reset`).
+2. Two Playwright journeys — **install & configure** and **walkthrough** — are recorded headed under a virtual display (Xvfb) inside a Docker image (`npm run demo:record:docker`), so every narrated action (drag-and-drop, adding a teammate, opening a card) is actually performed on screen against the live app.
+3. A neutral neural voice-over (Piper TTS, `say` fallback) and on-screen captions are muxed in, and a QA pass checks for overlap/dead-air/blank frames.
+4. `npm run demo:publish` copies the latest reels from `artifacts/` into [`docs/media/`](docs/media/) — the exact files this README links to.
+
+CI runs the same flow against a Dockerized YouTrack, so the reels stay in sync with the app.
+
+---
+
+## Status & limitations
+
+Verified end-to-end against real YouTrack **2025.3** (Docker): install + attach, per-project configuration, the drag-and-drop planner, one-click next Sprint, opening issues in YouTrack's native view, and the demo reels all run against a live instance — reproduced in [CI](.github/workflows/ci.yml).
+
+Known limitations are tracked as GitHub issues under the [`known-limitation`](https://github.com/ndkoval/yt-sprint-planner-plugin/issues?q=is%3Aissue+label%3Aknown-limitation) label:
+
+- [#1 — Enforce the caller's native board permission for sprint create/edit](https://github.com/ndkoval/yt-sprint-planner-plugin/issues/1)
+- [#2 — Replace the admin service-token bridge with the Backend JS (entities) API](https://github.com/ndkoval/yt-sprint-planner-plugin/issues/2)
+- [#3 — Add a Capacity-Managers group picker to the settings form](https://github.com/ndkoval/yt-sprint-planner-plugin/issues/3)
+- [#4 — Verify the workflow rule modules' YouTrack SDK surface against live execution](https://github.com/ndkoval/yt-sprint-planner-plugin/issues/4)
 
 ---
 
 See also: [`ARCHITECTURE.md`](ARCHITECTURE.md) · [`WORKFLOWS.md`](WORKFLOWS.md) · [`DATA_MODEL.md`](DATA_MODEL.md) · [`TESTING.md`](TESTING.md) · [`SECURITY.md`](SECURITY.md) · [`CHANGELOG.md`](CHANGELOG.md)
+
+---
+
+## Contributing
+
+Issues and pull requests are welcome. Please run `npm run test:all` (lint → typecheck → unit → contract → build) before opening a PR; see [`TESTING.md`](TESTING.md) for the full test pyramid.
+
+## License
+
+Licensed under the **[Apache License 2.0](LICENSE)**. © 2026 Nikita Koval and contributors.

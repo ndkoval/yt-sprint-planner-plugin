@@ -30,18 +30,14 @@ export function defaultConfig(overrides: Partial<ProjectConfig> = {}): ProjectCo
     currentEffortField: 'Estimation',
     hoursPerDay: 8,
     sprintLengthDays: 14,
-    firstSprintStart: '2026-01-05', // Monday
     datePolicy: 'continuous',
     nameTemplate: 'AppGlass {year}-S{sequence}',
-    bootstrapFocusFactor: 0.7,
+    backlogQuery: '',
     learningRate: 0.5,
-    maxFactorStep: 0.1,
-    minFocusFactor: 0.3,
-    maxFocusFactor: 0.9,
     participants: [
-      { userId: MEMBER.id, enabled: true },
-      { userId: MEMBER_2.id, enabled: true },
-      { userId: DISABLED_USER.id, enabled: false },
+      { userId: MEMBER.id, enabled: true, allocation: 1 },
+      { userId: MEMBER_2.id, enabled: true, allocation: 1 },
+      { userId: DISABLED_USER.id, enabled: false, allocation: 1 },
     ],
     ...overrides,
   };
