@@ -2,6 +2,12 @@
 
 All notable changes to the Sprint Capacity Planner are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-07-20
+
+- Set the app vendor/author to **Nikita Koval** (was a placeholder).
+- Trimmed the README to a concise project page; moved development/testing notes to
+  `AGENTS.md` (with `CLAUDE.md` as a symlink to it).
+
 ## [0.1.0] — 2026-07-19
 
 First tagged release. Ships the app package (`dist/sprint-capacity-planner.zip`), the
@@ -173,5 +179,6 @@ Additional unfinished wiring: no API route sets the `scpCapacityManagers` group 
 - **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) — fast lane (lint/typecheck/unit/contract/build/pack + package upload) and an opt-in, gated YouTrack lane.
 - **Documentation** — [`README.md`](README.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`WORKFLOWS.md`](WORKFLOWS.md), [`DATA_MODEL.md`](DATA_MODEL.md), [`TESTING.md`](TESTING.md), and [`SECURITY.md`](SECURITY.md).
 
-[Unreleased]: https://example.com/appglass/sprint-capacity-planner/compare/v0.1.0...HEAD
-[0.1.0]: https://example.com/appglass/sprint-capacity-planner/releases/tag/v0.1.0
+[Unreleased]: https://github.com/ndkoval/yt-sprint-planner-plugin/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/ndkoval/yt-sprint-planner-plugin/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/ndkoval/yt-sprint-planner-plugin/releases/tag/v0.1.0
