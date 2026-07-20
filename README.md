@@ -27,6 +27,16 @@ A YouTrack App that adds **capacity planning, computed delivery metrics, and a o
 
 It deliberately does **not** create service/placeholder issues, track committed scope, or add locks/approval gates. See [`docs/JIRA_ALIGNMENT.md`](docs/JIRA_ALIGNMENT.md) for how the model maps onto Jira.
 
+## Screenshots
+
+| | |
+| --- | --- |
+| **Capacity table** — per-person default/available capacity with live load bars | ![Capacity table](docs/media/screenshots/01-capacity.png) |
+| **Planning board** — drag issues from the backlog onto teammate lanes; over-capacity is flagged | ![Planning board](docs/media/screenshots/02-planning-board.png) |
+| **Issue overlay** — double-click a card to view and edit the issue without leaving the plan | ![Issue overlay](docs/media/screenshots/03-issue-overlay.png) |
+| **Next Sprint in one click** — computed name, dates and optional carry-over | ![Create next Sprint](docs/media/screenshots/04-create-next-sprint.png) |
+| **Settings** — board, effort fields, schedule, backlog query and focus-factor calibration | ![Settings](docs/media/screenshots/05-settings.png) |
+
 ## Install
 
 Requires YouTrack **2024.3+** (Cloud or Server).
