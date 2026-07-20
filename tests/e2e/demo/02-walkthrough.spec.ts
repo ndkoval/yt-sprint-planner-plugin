@@ -87,23 +87,29 @@ test.describe('App walkthrough', () => {
     await expect(board.getByLabel('Lane Backlog').locator('[title*="Mobile responsive"]')).toBeVisible();
     await settle(page, 900);
 
-    // 6. Double-click a card → open the issue in an IN-PAGE modal (no new tab/window). Adjust the
-    //    estimate right there and save, without leaving the plan.
-    await cap.say('Double-click any issue to open it right here — no new tab, no leaving the plan.');
+    // 6. Double-click a card → the issue opens as an IN-PAGE overlay OVER the planner (dimmed
+    // behind it), never a new tab/window. Edit a field right there, then close — without leaving
+    // the plan.
+    await cap.say('Double-click any issue to open it right here — over the plan, never a new tab.');
     const checkoutCard = board.locator('[title*="Checkout API"]').first();
     await moveTo(page, checkoutCard);
     await checkoutCard.dblclick();
-    const dialog = board.locator('[data-test="scp-issue-dialog"]');
-    await expect(dialog).toBeVisible();
-    await settle(page, 900);
-    await cap.say('See its details, adjust the estimate, and save — instantly, right in the planner.');
-    const estimate = dialog.locator('input[type="number"]').first();
-    await estimate.fill('5');
+    const overlay = board.locator('[data-test="scp-issue-overlay"]');
+    await expect(overlay).toBeVisible();
+    await settle(page, 1000);
+    await cap.say('The full issue — title, description, comments, fields and tags — all editable in place.');
+    // Change the State to show live editing.
+    const stateSelect = overlay.getByLabel('State');
+    if (await stateSelect.count()) {
+      const opts = await stateSelect.locator('option').allTextContents();
+      if (opts.length > 1) await stateSelect.selectOption({ label: opts[opts.length - 1]! }).catch(() => {});
+      await settle(page, 1400);
+    }
+    await info.attach('issue-overlay.png', { body: await page.screenshot(), contentType: 'image/png' }).catch(() => {});
+    await cap.say('Save happens instantly — then close and you’re back on your plan.');
+    await overlay.getByRole('button', { name: /Close/ }).first().click().catch(() => {});
+    await expect(overlay).toBeHidden();
     await settle(page, 800);
-    await info.attach('issue-dialog.png', { body: await page.screenshot(), contentType: 'image/png' }).catch(() => {});
-    await humanClick(page, dialog.getByRole('button', { name: 'Save changes' }));
-    await expect(dialog).toBeHidden();
-    await settle(page, 900);
 
     // 7. One-click next Sprint (planner) — show the computed preview, then close.
     await cap.say('Create the next Sprint in one click — name, dates and focus factor are computed for you.');

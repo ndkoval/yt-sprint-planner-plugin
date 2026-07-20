@@ -143,13 +143,6 @@ export interface YouTrackClient {
    */
   setIssueAssignee(issueId: string, assigneeId: string | null): Promise<void>;
 
-  /**
-   * Set (or clear) a period custom field's value on an issue, in MINUTES (null clears). Used to
-   * adjust Original/Current Effort from the planner's issue dialog. Requires the app's
-   * Issue.Update scope; the caller's manager permission is enforced server-side first.
-   */
-  setIssueEffort(issueId: string, fieldName: string, minutes: number | null): Promise<void>;
-
   /** Read an app extension property from an entity. Returns null if unset. */
   getExtensionProperty(
     entityType: 'Sprint' | 'Issue' | 'Project',

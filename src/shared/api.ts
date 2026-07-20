@@ -203,17 +203,6 @@ export interface PlanIssueRequest {
   assigneeId: string | null;
 }
 
-/**
- * Adjust an issue's fields from the planner's issue dialog. Each field is optional (omit to leave
- * unchanged); a null effort clears that period field; a null assignee unassigns. Manager-only,
- * and the issue must currently be in the managed Sprint.
- */
-export interface UpdateIssueRequest {
-  originalEffortMinutes?: number | null;
-  currentEffortMinutes?: number | null;
-  assigneeId?: string | null;
-}
-
 /** GET /diagnostics (manager-only). */
 export interface DiagnosticsResponse {
   correlationId: string;

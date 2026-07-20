@@ -28,7 +28,6 @@ export type FaultMethod =
   | 'getSprintIssues'
   | 'searchUsers'
   | 'setIssueAssignee'
-  | 'setIssueEffort'
   | 'getExtensionProperties';
 
 export interface SeedSprintOptions {
@@ -69,10 +68,6 @@ export class FakeYouTrack implements YouTrackClient {
   private readonly boardManagers = new Map<string, Set<string>>();
   private readonly projectFields = new Map<string, YtCustomField[]>();
   private readonly ext = new Map<string, ExtRecord>();
-  // Configured effort field names, captured at seed time so setIssueEffort can map a field name
-  // back to the original/current effort bucket (the fake stores effort by bucket, not by name).
-  private originalEffortFieldName = '';
-  private currentEffortFieldName = '';
 
   // ---- seeding helpers -------------------------------------------------------
 
@@ -134,8 +129,6 @@ export class FakeYouTrack implements YouTrackClient {
   /** Seed a configured project: writes scpConfigJson/revision and the managers group. */
   seedConfiguredProject(opts: SeedProjectOptions): this {
     const revision = opts.revision ?? 1;
-    this.originalEffortFieldName = opts.config.originalEffortField;
-    this.currentEffortFieldName = opts.config.currentEffortField;
     const store: ExtRecord = {
       scpConfigJson: opts.rawConfigJson ?? JSON.stringify(opts.config),
       scpConfigRevision: revision,
@@ -294,19 +287,6 @@ export class FakeYouTrack implements YouTrackClient {
       if (issue) {
         issue.assigneeId = assigneeId;
         issue.assigneeName = assigneeId !== null ? this.users.get(assigneeId)?.name ?? null : null;
-        return Promise.resolve();
-      }
-    }
-    return Promise.resolve();
-  }
-
-  setIssueEffort(issueId: string, fieldName: string, minutes: number | null): Promise<void> {
-    this.maybeThrow('setIssueEffort');
-    for (const issues of [...this.issuesBySprint.values(), this.backlog]) {
-      const issue = issues.find((i) => i.id === issueId);
-      if (issue) {
-        if (fieldName === this.originalEffortFieldName) issue.originalEffortMinutes = minutes;
-        else if (fieldName === this.currentEffortFieldName) issue.currentEffortMinutes = minutes;
         return Promise.resolve();
       }
     }

@@ -48,6 +48,15 @@ export interface HostBridge {
   resolveUserId(): Promise<string | null>;
   /** Perform an app-backend request for an app-relative `path`. Returns the raw Response. */
   fetch(path: string, init?: HostRequestInit): Promise<Response>;
+  /**
+   * Call the YouTrack REST API directly (path relative to `/api/`, e.g. `issues/AGP-1`) in the
+   * CURRENT USER's context — so YouTrack enforces the user's own permissions (no app-side IDOR).
+   * Returns the parsed JSON. Used by the in-page issue editor.
+   */
+  fetchYouTrack(path: string, init?: HostRequestInit): Promise<unknown>;
+  /** Expand the widget to a full-page modal overlay over the host page (and restore it). */
+  enterModalMode(): Promise<void>;
+  exitModalMode(): Promise<void>;
 }
 
 /**
@@ -63,6 +72,12 @@ interface YouTrackHost {
     relativeUrl: string,
     options: { method?: string; body?: unknown; query?: Record<string, string> },
   ): Promise<unknown>;
+  fetchYouTrack?(
+    relativeUrl: string,
+    options?: { method?: string; body?: unknown; query?: Record<string, string> },
+  ): Promise<unknown>;
+  enterModalMode?(): void | Promise<void>;
+  exitModalMode?(): void | Promise<void>;
 }
 
 interface YTAppGlobal {
@@ -189,6 +204,34 @@ export class WindowHostBridge implements HostBridge {
       ...(init?.body !== undefined ? { body: init.body } : {}),
     });
   }
+
+  async fetchYouTrack(path: string, init?: HostRequestInit): Promise<unknown> {
+    const host = await this.host();
+    const body = init?.body !== undefined ? (JSON.parse(init.body) as unknown) : undefined;
+    if (host?.fetchYouTrack) {
+      return host.fetchYouTrack(path, {
+        method: init?.method ?? 'GET',
+        ...(body !== undefined ? { body } : {}),
+      });
+    }
+    // Dev fallback: same-origin YouTrack REST (standalone harness / tests).
+    const res = await window.fetch(`/api/${path}`, {
+      method: init?.method ?? 'GET',
+      headers: { 'content-type': 'application/json', accept: 'application/json', ...(init?.headers ?? {}) },
+      ...(init?.body !== undefined ? { body: init.body } : {}),
+    });
+    return res.json().catch(() => null);
+  }
+
+  async enterModalMode(): Promise<void> {
+    const host = await this.host();
+    await host?.enterModalMode?.();
+  }
+
+  async exitModalMode(): Promise<void> {
+    const host = await this.host();
+    await host?.exitModalMode?.();
+  }
 }
 
 /** Typed client bound to a {@link HostBridge}. */
@@ -200,6 +243,20 @@ export class ApiClient {
   /** The current viewer's user id, or null when the host cannot provide it. */
   resolveUserId(): Promise<string | null> {
     return this.bridge.resolveUserId();
+  }
+
+  /** Call the YouTrack REST API directly (in the current user's context). See {@link HostBridge}. */
+  fetchYouTrack(path: string, init?: HostRequestInit): Promise<unknown> {
+    return this.bridge.fetchYouTrack(path, init);
+  }
+
+  /** Expand the widget into a full-page modal overlay over the host page (and restore it). */
+  enterModalMode(): Promise<void> {
+    return this.bridge.enterModalMode();
+  }
+
+  exitModalMode(): Promise<void> {
+    return this.bridge.exitModalMode();
   }
 
   private async projectId(): Promise<string> {
@@ -294,23 +351,6 @@ export class ApiClient {
     return this.request<SprintView>(
       'POST',
       `/sprints/${encodeURIComponent(sprintId)}/issues/${encodeURIComponent(issueId)}/plan`,
-      body,
-    );
-  }
-
-  /** Adjust an issue (Original/Current Effort + assignee) from the planner's issue dialog. */
-  updateIssue(
-    sprintId: string,
-    issueId: string,
-    body: {
-      originalEffortMinutes?: number | null;
-      currentEffortMinutes?: number | null;
-      assigneeId?: string | null;
-    },
-  ): Promise<SprintView> {
-    return this.request<SprintView>(
-      'PATCH',
-      `/sprints/${encodeURIComponent(sprintId)}/issues/${encodeURIComponent(issueId)}`,
       body,
     );
   }

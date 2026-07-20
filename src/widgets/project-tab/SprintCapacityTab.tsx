@@ -10,7 +10,7 @@ import { CapacitySummary } from '../components/CapacitySummary';
 import { EffortSummary } from '../components/EffortSummary';
 import { DataHealth } from '../components/DataHealth';
 import { SprintDetails } from '../components/SprintDetails';
-import { IssueDetailsDialog } from '../components/IssueDetailsDialog';
+import { IssueDetailsOverlay } from '../components/IssueDetailsOverlay';
 import {
   CreateNextSprintDialog,
   type NextSprintPreview,
@@ -120,10 +120,8 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
   const [showOverride, setShowOverride] = useState(false);
   const [overriding, setOverriding] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
-  // Double-clicking a board card opens this issue in an in-page modal (never a new tab/window).
+  // Double-clicking a board card opens this issue in an in-page overlay over the planner.
   const [activeIssue, setActiveIssue] = useState<IssueView | null>(null);
-  const [savingIssue, setSavingIssue] = useState(false);
-  const [issueError, setIssueError] = useState<string | null>(null);
 
   const hoursPerDay = config?.hoursPerDay ?? 8;
 
@@ -421,42 +419,13 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
     [sprint, client, backlog],
   );
 
-  // Double-click a card: open the issue in an IN-PAGE modal over the planner (never a new tab or
-  // window), so a manager can see its details and adjust effort/assignee instantly, then save
-  // without leaving the plan.
+  // Double-click a card: open the issue in an IN-PAGE overlay OVER the planner (the planner
+  // stays dimmed behind it — never a new tab/window). YouTrack blocks embedding its native issue
+  // page in the widget's opaque-origin iframe, so this is the app's own editor driven through the
+  // YouTrack REST API in the current user's context (see IssueDetailsOverlay).
   const openIssue = useCallback((issue: IssueView): void => {
-    setIssueError(null);
     setActiveIssue(issue);
   }, []);
-
-  const saveIssue = useCallback(
-    (patch: {
-      originalEffortMinutes?: number | null;
-      currentEffortMinutes?: number | null;
-      assigneeId?: string | null;
-    }): void => {
-      if (sprint === null || activeIssue === null) return;
-      const sprintId = sprint.id;
-      const issueId = activeIssue.id;
-      setSavingIssue(true);
-      setIssueError(null);
-      client
-        .updateIssue(sprintId, issueId, patch)
-        .then(async (updated) => {
-          setSprint(updated);
-          const [iss, bl] = await Promise.all([
-            client.listSprintIssues(sprintId),
-            client.listBacklog(sprintId).catch(() => backlog),
-          ]);
-          setIssues(iss);
-          setBacklog(bl);
-          setActiveIssue(null);
-        })
-        .catch((err: unknown) => setIssueError(err instanceof Error ? err.message : String(err)))
-        .finally(() => setSavingIssue(false));
-    },
-    [sprint, activeIssue, client, backlog],
-  );
 
   // Leaving the embedded settings panel: return to the planner and reload so any
   // configuration change (board, fields, participants) is reflected immediately.
@@ -605,20 +574,17 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
           </section>
 
           {activeIssue !== null ? (
-            <IssueDetailsDialog
+            <IssueDetailsOverlay
               issue={activeIssue}
-              hoursPerDay={hoursPerDay}
-              originalEffortLabel={config?.originalEffortField ?? 'Original effort'}
-              currentEffortLabel={config?.currentEffortField ?? 'Current effort'}
-              assigneeOptions={rows.map((r) => ({
+              client={client}
+              teammates={rows.map((r) => ({
                 userId: r.userId,
+                login: r.loginSnapshot,
                 name: r.displayNameSnapshot || r.loginSnapshot,
               }))}
-              isManager={isManager}
-              saving={savingIssue}
-              error={issueError}
-              onSave={saveIssue}
+              hoursPerDay={hoursPerDay}
               onClose={() => setActiveIssue(null)}
+              onChanged={() => void load()}
             />
           ) : null}
 
