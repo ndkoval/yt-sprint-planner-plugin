@@ -68,7 +68,13 @@ const inner = [
   'Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -ac >/tmp/xvfb.log 2>&1 &',
   'export DISPLAY=:99',
   'for i in $(seq 1 40); do [ -e /tmp/.X11-unix/X99 ] && break; sleep 0.25; done',
-  'npx playwright test --config playwright.demo.config.ts',
+  'npx playwright test --config playwright.demo.config.ts; rc=$?',
+  // The container runs as root, so whatever it wrote under artifacts/ is root-owned on the host
+  // bind mount — the host-side render-reels (a non-root user on Linux/CI) then can't create
+  // artifacts/demo/reels. Hand artifacts/ back to the repo's owner before exiting (a no-op on
+  // Docker Desktop, which already maps to the host user). Preserve Playwright's exit code.
+  'chown -R "$(stat -c %u:%g /work)" /work/artifacts 2>/dev/null || true',
+  'exit $rc',
 ].join('\n');
 
 run('docker', [
