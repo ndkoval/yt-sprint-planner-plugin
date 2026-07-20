@@ -117,6 +117,8 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Security review (placeholder)
-        run: echo "SPIKE: wire security scanner / security-review plugin here."
+        run: |
+          echo "SPIKE - wire security scanner / security-review plugin here."
       - name: Automated code review (placeholder)
-        run: echo "SPIKE: wire the code-review plugin here."
+        run: |
+          echo "SPIKE - wire the code-review plugin here."
