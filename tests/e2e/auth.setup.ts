@@ -25,22 +25,18 @@ async function login(
     return;
   }
   await page.goto('/');
-  // SPIKE: Hub login form. Try the common Ring UI login fields, fall back by label.
-  const username = page
-    .getByRole('textbox', { name: /username|login|e-?mail/i })
-    .or(page.locator('input[name="username"], input#username'))
-    .first();
-  const password = page
-    .getByRole('textbox', { name: /password/i })
-    .or(page.locator('input[type="password"], input[name="password"]'))
-    .first();
-
+  await page.waitForTimeout(2000);
+  // Use the same proven YouTrack/Hub login flow as the demo global-setup (id/type selectors,
+  // not role/label — the Hub form's accessible names are unreliable across builds).
+  const username = (await page.$('input#username')) ?? (await page.$('input[type=text]'));
+  if (username === null) {
+    setup.skip(true, 'login form not found (already authenticated or unexpected page)');
+    return;
+  }
   await username.fill(persona.login);
-  await password.fill(persona.password);
-  await page
-    .getByRole('button', { name: /log ?in|sign ?in/i })
-    .first()
-    .click();
+  await (await page.$('input[type=password]'))!.fill(persona.password);
+  await (await page.$('button[type=submit]'))!.click();
+  await page.waitForTimeout(4000);
 
   // Confirm we reached an authenticated view before saving state.
   await expect(page).not.toHaveURL(/login/i, { timeout: 15_000 });

@@ -54,6 +54,17 @@ async function ensureUser(login, name) {
   }
   return null;
 }
+/** Set a user's Hub display name (by Hub/ring id) and wait (best-effort) for it to sync to
+ *  YouTrack, so the app + UI show it. Idempotent; returns quickly once already synced. */
+async function renameUser(ringId, name) {
+  if (!ringId) return;
+  await rest('POST', `/hub/api/rest/users/${ringId}`, { name }, { fields: 'id,name' }, HUB_H).catch(() => {});
+  for (let i = 0; i < 60; i += 1) {
+    const u = await rest('GET', '/api/users/me', undefined, { fields: 'fullName' }, H).catch(() => null);
+    if (u?.fullName === name) return;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const isPending = (p) => p.archived === true || /pending deletion/i.test(p.name ?? '');
@@ -127,14 +138,22 @@ runMain().catch((e) => { console.error('SETUP FAILED:', e.message); process.exit
 async function runMain() {
   if (!TOKEN) throw new Error('No app token');
   log('base', B);
-  const me = await rest('GET', '/api/users/me', undefined, { fields: 'id' });
+  const me = await rest('GET', '/api/users/me', undefined, { fields: 'id,ringId' });
+  // The demo's main user is Nikita Koval — the person planning the Sprint (logged in during the
+  // reels, the primary teammate, the assignee of the lead issues). Creating a separate loginable
+  // user isn't reliable via REST, and the reels log in as the admin account, so we give THAT
+  // account the display name "Nikita Koval" (its login stays "admin" for provisioning). Hub→
+  // YouTrack name sync is eventual; each reel re-creates the Sprint (resetDemoState), so the
+  // capacity name snapshot picks up "Nikita Koval" by recording time.
+  await renameUser(me.ringId, 'Nikita Koval');
+  const nikita = me.id;
   // A fuller team so the planning board has several lanes, including part-timers.
   const alice = await ensureUser('alice', 'Alice Smith');
   const bob = await ensureUser('bob', 'Bob Jones');
   const charlie = await ensureUser('charlie', 'Charlie Diaz');
   const dana = await ensureUser('dana', 'Dana Lee');
   const erin = await ensureUser('erin', 'Erin Park');
-  log('team', { me: me.id, alice, bob, charlie, dana, erin });
+  log('team', { nikita, alice, bob, charlie, dana, erin });
 
   const projectId = await ensureProject('AppGlass', 'AGP');
   const origId = await ensurePeriodField('Original Effort');
@@ -152,7 +171,7 @@ async function runMain() {
   // OFF the team here (though she is a real, assignable project member) so the setup reel can
   // add her live with the picker — see tests/e2e/demo/01-setup.spec.ts.
   await app('POST', '/__configure', { token: TOKEN, baseUrl: B });
-  const participants = [{ userId: me.id, enabled: true, allocation: 1 }];
+  const participants = [{ userId: nikita, enabled: true, allocation: 1 }];
   const partTime = { [alice]: 1, [bob]: 0.5, [charlie]: 1, [dana]: 0.8 };
   for (const u of [alice, bob, charlie, dana]) {
     if (u) participants.push({ userId: u, enabled: true, allocation: partTime[u] ?? 1 });
@@ -179,8 +198,8 @@ async function runMain() {
   log('managed sprint', sprint.id, sprint.name, sprint.start, '->', sprint.finish);
 
   // Seed issues onto the managed sprint with effort, assignee and state.
-  // Only project members are assignable; admin is the reliable one on a fresh instance.
-  // Some issues go to admin (shows per-person Load), others stay unassigned (shows the
+  // The admin account (display name "Nikita Koval") is the main user and reliable assignee.
+  // Some issues go to Nikita (shows per-person Load), others stay unassigned (shows the
   // Unassigned bucket). MEMBERS teammates get assigned too if they're on the project team.
   const assignable = new Set(['admin']);
   // A realistic, deliberately over-committed Sprint: every assigned teammate individually

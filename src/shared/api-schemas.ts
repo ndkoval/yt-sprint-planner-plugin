@@ -69,3 +69,20 @@ export const planIssueRequestSchema = z
   })
   .strict();
 
+// Adjust an issue's fields from the planner's issue dialog. Every field is optional: omit to
+// leave unchanged; a null effort clears that period field; a null assignee unassigns.
+export const updateIssueRequestSchema = z
+  .object({
+    originalEffortMinutes: z.number().int().min(0).nullable().optional(),
+    currentEffortMinutes: z.number().int().min(0).nullable().optional(),
+    assigneeId: z.string().min(1).nullable().optional(),
+  })
+  .strict()
+  .refine(
+    (b) =>
+      b.originalEffortMinutes !== undefined ||
+      b.currentEffortMinutes !== undefined ||
+      b.assigneeId !== undefined,
+    { message: 'at least one field must be provided' },
+  );
+

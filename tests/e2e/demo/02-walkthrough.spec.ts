@@ -87,26 +87,23 @@ test.describe('App walkthrough', () => {
     await expect(board.getByLabel('Lane Backlog').locator('[title*="Mobile responsive"]')).toBeVisible();
     await settle(page, 900);
 
-    // 6. Double-click a card → open the issue in a POP-UP (YouTrack's native issue view), without
-    // navigating away to the board. The pop-up is a separate window; capture it as a screenshot.
-    await cap.say('Double-click any issue to open it in a pop-up — the full issue, right from the planner.');
+    // 6. Double-click a card → open the issue in an IN-PAGE modal (no new tab/window). Adjust the
+    //    estimate right there and save, without leaving the plan.
+    await cap.say('Double-click any issue to open it right here — no new tab, no leaving the plan.');
     const checkoutCard = board.locator('[title*="Checkout API"]').first();
     await moveTo(page, checkoutCard);
-    const [popup] = await Promise.all([
-      page.context().waitForEvent('page', { timeout: 12_000 }).catch(() => null),
-      checkoutCard.dblclick(),
-    ]);
-    if (popup !== null) {
-      await popup.waitForLoadState('domcontentloaded').catch(() => {});
-      await popup.waitForTimeout(1800);
-      const notNow = popup.locator('[data-test="not-now"]');
-      if (await notNow.count()) await notNow.first().click().catch(() => {});
-      await cap.say('State, assignee, and the estimate — all editable, without leaving your plan.');
-      await popup.waitForTimeout(600);
-      await info.attach('issue-popup.png', { body: await popup.screenshot(), contentType: 'image/png' }).catch(() => {});
-      await popup.close().catch(() => {});
-    }
+    await checkoutCard.dblclick();
+    const dialog = board.locator('[data-test="scp-issue-dialog"]');
+    await expect(dialog).toBeVisible();
+    await settle(page, 900);
+    await cap.say('See its details, adjust the estimate, and save — instantly, right in the planner.');
+    const estimate = dialog.locator('input[type="number"]').first();
+    await estimate.fill('5');
     await settle(page, 800);
+    await info.attach('issue-dialog.png', { body: await page.screenshot(), contentType: 'image/png' }).catch(() => {});
+    await humanClick(page, dialog.getByRole('button', { name: 'Save changes' }));
+    await expect(dialog).toBeHidden();
+    await settle(page, 900);
 
     // 7. One-click next Sprint (planner) — show the computed preview, then close.
     await cap.say('Create the next Sprint in one click — name, dates and focus factor are computed for you.');

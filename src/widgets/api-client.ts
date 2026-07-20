@@ -298,6 +298,23 @@ export class ApiClient {
     );
   }
 
+  /** Adjust an issue (Original/Current Effort + assignee) from the planner's issue dialog. */
+  updateIssue(
+    sprintId: string,
+    issueId: string,
+    body: {
+      originalEffortMinutes?: number | null;
+      currentEffortMinutes?: number | null;
+      assigneeId?: string | null;
+    },
+  ): Promise<SprintView> {
+    return this.request<SprintView>(
+      'PATCH',
+      `/sprints/${encodeURIComponent(sprintId)}/issues/${encodeURIComponent(issueId)}`,
+      body,
+    );
+  }
+
   patchSprintDetails(sprintId: string, body: PatchSprintDetailsRequest): Promise<SprintView> {
     return this.request<SprintView>(
       'PATCH',

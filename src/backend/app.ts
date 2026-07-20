@@ -26,6 +26,7 @@ import type {
 } from '../shared/api.js';
 import {
   planIssueRequestSchema,
+  updateIssueRequestSchema,
   capacityRevisionRequestSchema,
   createNextSprintRequestSchema,
   excludeCalibrationRequestSchema,
@@ -361,6 +362,37 @@ export function createApp(deps: AppDeps): Router {
       await client.setIssueAssignee(issueId, parsed.assigneeId);
     } else if (alreadyInSprint) {
       await client.removeIssueFromSprint(ctx.boardId, sprint.id, issueId);
+    }
+    return reconcileAndView(ctx, sprint.id);
+  });
+
+  // ---- PATCH /sprints/:sprintId/issues/:issueId -------------------------------
+  // Adjust an issue directly from the planner's issue dialog (Original/Current Effort +
+  // assignee). Manager-only, and scoped to the managed Sprint: the issue must currently be in
+  // this Sprint (so this can never mutate an arbitrary issue). Returns the reconciled SprintView.
+  router.add('PATCH', '/sprints/:sprintId/issues/:issueId', async (req) => {
+    const ctx = await requireContext(req);
+    if (!canAssignIssues(ctx.principal)) throw forbidden('Only managers can edit issues.');
+    const parsed = updateIssueRequestSchema.parse(req.body);
+    const sprint = await loadSprintRecord(ctx, req.params.sprintId!);
+    const issueId = req.params.issueId!;
+    const current = await client.getSprintIssues(
+      ctx.boardId,
+      sprint.id,
+      ctx.config.originalEffortField,
+      ctx.config.currentEffortField,
+    );
+    if (!current.some((i) => i.id === issueId)) {
+      throw notFound('Issue is not in this Sprint.');
+    }
+    if (parsed.originalEffortMinutes !== undefined) {
+      await client.setIssueEffort(issueId, ctx.config.originalEffortField, parsed.originalEffortMinutes);
+    }
+    if (parsed.currentEffortMinutes !== undefined) {
+      await client.setIssueEffort(issueId, ctx.config.currentEffortField, parsed.currentEffortMinutes);
+    }
+    if (parsed.assigneeId !== undefined) {
+      await client.setIssueAssignee(issueId, parsed.assigneeId);
     }
     return reconcileAndView(ctx, sprint.id);
   });

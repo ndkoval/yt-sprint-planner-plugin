@@ -470,6 +470,24 @@ export class YouTrackHttpClient implements YouTrackClient {
     );
   }
 
+  async setIssueEffort(issueId: string, fieldName: string, minutes: number | null): Promise<void> {
+    // Period custom field. Verified on 2025.3: $type PeriodIssueCustomField, value
+    // { $type: 'PeriodValue', minutes } sets it; value null clears it.
+    await this.conn.post(
+      `/api/issues/${encodeURIComponent(issueId)}`,
+      {
+        customFields: [
+          {
+            name: fieldName,
+            $type: 'PeriodIssueCustomField',
+            value: minutes !== null ? { $type: 'PeriodValue', minutes } : null,
+          },
+        ],
+      },
+      { fields: 'id' },
+    );
+  }
+
   async getExtensionProperty(
     entityType: 'Sprint' | 'Issue' | 'Project',
     entityId: string,

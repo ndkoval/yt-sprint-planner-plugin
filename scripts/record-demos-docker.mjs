@@ -98,10 +98,12 @@ run('docker', [
   `YT_TEST_ADMIN_TOKEN=${TOKEN}`,
   '-e',
   `YT_TEST_HUB_TOKEN=${HUB_TOKEN}`,
+  // Record logged in as the admin account, whose display name the seed sets to "Nikita Koval"
+  // (the demo's main user). Reseeding uses the admin token above; this is just the browser login.
   '-e',
-  'YT_TEST_MANAGER_LOGIN=admin',
+  `YT_TEST_MANAGER_LOGIN=${process.env.YT_TEST_MANAGER_LOGIN ?? 'admin'}`,
   '-e',
-  'YT_TEST_MANAGER_PASSWORD=adminPass123!',
+  `YT_TEST_MANAGER_PASSWORD=${process.env.YT_TEST_MANAGER_PASSWORD ?? 'adminPass123!'}`,
   IMAGE,
   'bash',
   '-lc',

@@ -18,6 +18,8 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 
 const BASE = process.env.YT_TEST_BASE_URL ?? 'http://localhost:8080';
+// The reels log in as the admin account, whose display name the seed sets to "Nikita Koval"
+// (the demo's main user). Provisioning itself uses the admin token, not this browser login.
 const USER = process.env.YT_TEST_MANAGER_LOGIN ?? 'admin';
 const PASS = process.env.YT_TEST_MANAGER_PASSWORD ?? 'adminPass123!';
 export const STORAGE_STATE = path.resolve('artifacts/demo/storageState.json');
