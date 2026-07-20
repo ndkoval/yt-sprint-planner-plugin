@@ -103,17 +103,54 @@ function ffprobeDurationSec(file) {
   return Number(r.stdout.trim()) || 0;
 }
 
+/**
+ * Produce a SILENT .mp4 per reel (transcode of the recorded webm) into OUT_DIR. Used when no TTS
+ * voice is available (e.g. a Linux CI runner without Piper/`say`) so downstream steps
+ * (analyze-video, publish-demo-assets) still have an .mp4 set to work with — the reels just have
+ * no narration. The shipping reels are always rendered with a voice locally. Returns the count.
+ */
+async function renderSilentReels(log) {
+  await mkdir(OUT_DIR, { recursive: true });
+  let n = 0;
+  for (const reel of REELS) {
+    const video = await findVideo(reel.dir);
+    if (video === null) {
+      log.warn(`skip ${reel.vtt} (no recorded video)`);
+      continue;
+    }
+    const out = path.join(OUT_DIR, `${reel.vtt}.mp4`);
+    const r = spawnSync(
+      'ffmpeg',
+      ['-y', '-i', video, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-an', '-movflags', '+faststart', out],
+      { encoding: 'utf8' },
+    );
+    if (r.status === 0) {
+      n += 1;
+      log.info(`wrote ${path.basename(out)} (silent)`);
+    } else {
+      log.warn(`transcode failed for ${reel.vtt}: ${r.stderr?.slice(-200) ?? ''}`);
+    }
+  }
+  log.info(`produced ${n} silent reel(s) in ${OUT_DIR}`);
+  return n;
+}
+
 runMain('render-reels', async (log) => {
   const usePiper = (await exists(PIPER_BIN)) && (await exists(PIPER_MODEL));
   const hasSay = have('say', '-v?') || process.platform === 'darwin';
   const hasVoice = usePiper || hasSay;
   const hasFfmpeg = have('ffmpeg');
   const hasFfprobe = have('ffprobe');
-  if (!hasVoice || !hasFfmpeg || !hasFfprobe) {
+  if (!hasFfmpeg || !hasFfprobe) {
+    log.warn(`cannot render reels: ffmpeg=${hasFfmpeg} ffprobe=${hasFfprobe} (both required).`);
+    return;
+  }
+  if (!hasVoice) {
     log.warn(
-      `voiceover skipped (piper=${usePiper} say=${hasSay} ffmpeg=${hasFfmpeg} ffprobe=${hasFfprobe}). ` +
-        'The webm reels + WebVTT subtitles are still produced.',
+      `no voiceover available (piper=${usePiper} say=${hasSay}) — producing SILENT reels ` +
+        '(the shipping reels are rendered with a voice locally).',
     );
+    await renderSilentReels(log);
     return;
   }
   log.info(
@@ -226,6 +263,13 @@ runMain('render-reels', async (log) => {
   }
 
   await rm(work, { recursive: true, force: true });
+
+  // Voice tools were present but synthesis/mux produced nothing (e.g. a broken voice model) —
+  // fall back to silent reels so downstream still has a usable .mp4 set.
+  if (rendered === 0) {
+    log.warn('voiced rendering produced no reels — falling back to SILENT reels.');
+    await renderSilentReels(log);
+  }
 
   // A tiny index so the VOICED reels are easy to find and play (the Playwright report's
   // .webm videos are silent — Playwright can't record audio; the narration is here).

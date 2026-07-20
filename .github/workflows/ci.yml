@@ -89,6 +89,21 @@ jobs:
         run: node scripts/ci-youtrack-docker.mjs
       - name: Build, install app + seed the prepared demo state
         run: npm run demo:provision
+      - name: Set up Piper neural TTS (voiced reels; best-effort)
+        # Best-effort: if this fails, render-reels falls back to silent reels and the job stays
+        # green (the QA review is advisory in CI). Paths match render-reels' defaults.
+        continue-on-error: true
+        run: |
+          python3 -m venv "$HOME/.piper-venv"
+          "$HOME/.piper-venv/bin/pip" install --quiet --upgrade pip
+          "$HOME/.piper-venv/bin/pip" install --quiet piper-tts
+          voices="$HOME/.local/share/piper-voices"
+          mkdir -p "$voices"
+          base="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium"
+          curl -fSL --retry 5 --retry-delay 3 -o "$voices/en_US-amy-medium.onnx" "$base/en_US-amy-medium.onnx"
+          curl -fSL --retry 5 --retry-delay 3 -o "$voices/en_US-amy-medium.onnx.json" "$base/en_US-amy-medium.onnx.json"
+          test -s "$voices/en_US-amy-medium.onnx"
+          "$HOME/.piper-venv/bin/piper" --help >/dev/null 2>&1 && echo "Piper ready"
       - name: Record the two reels (Docker + Xvfb)
         run: npm run demo:record:docker
       - name: Upload demo reels + report
