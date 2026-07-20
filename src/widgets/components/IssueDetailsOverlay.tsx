@@ -42,19 +42,15 @@ interface YtComment {
   author?: { name?: string };
   created?: number;
 }
-interface YtTag {
-  id: string;
-  name: string;
-}
 interface YtIssueFull {
   idReadable: string;
   summary: string;
   description: string | null;
+  project?: { name?: string };
   reporter?: { name?: string };
   updater?: { name?: string };
   created?: number;
   updated?: number;
-  tags?: YtTag[];
   comments?: YtComment[];
   customFields?: YtField[];
 }
@@ -65,7 +61,7 @@ const LINE = 'var(--ring-line-color, #dfe0e1)';
 
 const ISSUE_FIELDS =
   'idReadable,summary,description,created,updated,reporter(name),updater(name),' +
-  'tags(id,name),' +
+  'project(name),' +
   'customFields(name,$type,value(id,name,login,fullName,presentation,minutes,text),' +
   'projectCustomField(bundle(values(name))))';
 const ACTIVITY_FIELDS =
@@ -101,8 +97,24 @@ function valueText(v: YtValue | YtValue[] | null): string {
 }
 function fmtDate(ms?: number): string {
   if (!ms) return '';
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const diff = Date.now() - ms;
+  const day = 86_400_000;
+  const d = Math.floor(diff / day);
+  if (d <= 0) return 'today';
+  if (d === 1) return 'yesterday';
+  if (d < 30) return `${d} days ago`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo} month${mo > 1 ? 's' : ''} ago`;
+  const yr = Math.floor(mo / 12);
+  return `${yr} year${yr > 1 ? 's' : ''} ago`;
+}
+// Field-family colours to echo native YouTrack chips (Priority green, Type orange, State blue).
+function chipColor(fieldName: string, value: string): string {
+  const n = fieldName.toLowerCase();
+  if (n.includes('priority')) return '#59a869';
+  if (n.includes('type')) return '#e8a33d';
+  if (n.includes('state')) return '#7e8ee0';
+  return colorFor(value);
 }
 function daysText(minutes: number | undefined, hoursPerDay: number): string {
   if (minutes === undefined || minutes === null) return '';
@@ -138,7 +150,6 @@ export function IssueDetailsOverlay({
   const [title, setTitle] = useState(issue.summary);
   const [desc, setDesc] = useState('');
   const [comment, setComment] = useState('');
-  const [tagInput, setTagInput] = useState('');
   const [effortDrafts, setEffortDrafts] = useState<Record<string, string>>({});
 
   const yt = useCallback(
@@ -199,13 +210,6 @@ export function IssueDetailsOverlay({
     run(() =>
       yt(`issues/${encodeURIComponent(id)}/comments`, 'POST', { text: comment }).then(() => setComment('')),
     );
-  const addTag = (name: string): Promise<void> =>
-    run(() => yt(`issues/${encodeURIComponent(id)}/tags`, 'POST', { name }).then(() => setTagInput('')));
-  const removeTag = (tagId: string): Promise<void> =>
-    run(() =>
-      yt(`issues/${encodeURIComponent(id)}/tags/${encodeURIComponent(tagId)}`, 'DELETE').then(() => undefined),
-    );
-
   const U = 'var(--ring-unit)';
   const fields = data?.customFields ?? [];
   const assigneeType = fields.find((f) => /^assignee$/i.test(f.name))?.$type ?? 'SingleUserIssueCustomField';
@@ -214,6 +218,10 @@ export function IssueDetailsOverlay({
   // behind), so we fill that modal edge-to-edge — no extra backdrop or right-aligned inner panel
   // (that caused double-dimming + a cramped centre). A narrow fields column (native proportion)
   // leaves the issue content the larger share.
+  // Dimmed in-page overlay: the host presents the widget as a fixed ~600px modal (dimming the
+  // planner behind it), and this fills that modal. A proper dimmed overlay can only be the host
+  // modal (a wider overlay isn't possible — the iframe can't read the window height to stay
+  // on-screen), so it uses the native ~600px slide-over width.
   const rootPanel: React.CSSProperties = {
     position: 'fixed',
     inset: 0,
@@ -253,14 +261,14 @@ export function IssueDetailsOverlay({
     MozAppearance: 'none',
   };
 
-  const chipSquare = (text: string): React.JSX.Element => (
+  const chipSquare = (text: string, fieldName: string): React.JSX.Element => (
     <span
       style={{
         flex: 'none',
         width: 22,
         height: 22,
         borderRadius: 4,
-        background: colorFor(text),
+        background: chipColor(fieldName, text),
         color: '#fff',
         font: '700 12px/22px sans-serif',
         textAlign: 'center',
@@ -286,14 +294,18 @@ export function IssueDetailsOverlay({
     </span>
   );
 
-  // One field block in the native "label (gray) · chip (top-right) / value (blue) below" layout.
+  // One field block in the native layout: a left column (gray label + blue value stacked) and
+  // the icon/chip/avatar on the right, VERTICALLY CENTRED across the whole block (as in native).
   const field = (name: string, right: React.ReactNode, value: React.ReactNode): React.JSX.Element => (
-    <div key={name} style={{ marginBottom: `calc(${U} * 2.5)` }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: 22, marginBottom: 2 }}>
-        <span style={{ fontSize: 13, color: SECONDARY }}>{name}</span>
-        {right}
+    <div
+      key={name}
+      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: U, marginBottom: `calc(${U} * 2.5)` }}
+    >
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 13, color: SECONDARY, marginBottom: 2 }}>{name}</div>
+        <div>{value}</div>
       </div>
-      <div>{value}</div>
+      {right ? <div style={{ flex: 'none', display: 'flex', alignItems: 'center' }}>{right}</div> : null}
     </div>
   );
 
@@ -456,33 +468,37 @@ export function IssueDetailsOverlay({
             <div style={{ color: 'var(--ring-error-color)', marginBottom: U }}>{error}</div>
           ) : null}
 
-          {field(
-            'Assignee',
-            issue.assigneeName ? avatar(issue.assigneeName) : null,
-            <select
-              aria-label="Assignee"
-              style={valueControl}
-              value={issue.assigneeId ?? ''}
-              disabled={busy}
-              onChange={(e) => void setFieldValue('Assignee', assigneeType, e.target.value ? { id: e.target.value } : null)}
-            >
-              <option value="">Unassigned</option>
-              {teammates.map((m) => (
-                <option key={m.userId} value={m.userId}>
-                  {m.name}
-                </option>
-              ))}
-            </select>,
-          )}
+          {data?.project?.name
+            ? field('Project', null, <div style={{ color: LINK, fontSize: 15, fontWeight: 500 }}>{data.project.name}</div>)
+            : null}
 
           {fields.map((f) => {
-            if (/^assignee$/i.test(f.name)) return null;
             const values = f.projectCustomField?.bundle?.values ?? [];
+            if (/^assignee$/i.test(f.name)) {
+              return field(
+                'Assignee',
+                issue.assigneeName ? avatar(issue.assigneeName) : null,
+                <select
+                  aria-label="Assignee"
+                  style={valueControl}
+                  value={issue.assigneeId ?? ''}
+                  disabled={busy}
+                  onChange={(e) => void setFieldValue('Assignee', f.$type ?? assigneeType, e.target.value ? { id: e.target.value } : null)}
+                >
+                  <option value="">Unassigned</option>
+                  {teammates.map((m) => (
+                    <option key={m.userId} value={m.userId}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>,
+              );
+            }
             if (values.length > 0) {
               const current = Array.isArray(f.value) ? '' : (f.value?.name ?? '');
               return field(
                 f.name,
-                current ? chipSquare(current) : null,
+                current ? chipSquare(current, f.name) : null,
                 <select
                   aria-label={f.name}
                   style={valueControl}
@@ -526,45 +542,6 @@ export function IssueDetailsOverlay({
             }
             return field(f.name, null, <div style={{ color: LINK, fontSize: 15, fontWeight: 500 }}>{valueText(f.value)}</div>);
           })}
-
-          {field(
-            'Tags',
-            null,
-            <div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: `calc(${U} / 2)` }}>
-                {(data?.tags ?? []).map((t) => (
-                  <span
-                    key={t.id}
-                    style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 4, padding: `2px ${U}`,
-                      borderRadius: 12, background: 'var(--ring-tag-background-color, #eceef0)', fontSize: 13,
-                    }}
-                  >
-                    {t.name}
-                    <button
-                      aria-label={`Remove tag ${t.name}`}
-                      disabled={busy}
-                      onClick={() => void removeTag(t.id)}
-                      style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'inherit' }}
-                    >
-                      ✕
-                    </button>
-                  </span>
-                ))}
-              </div>
-              <input
-                aria-label="Add tag"
-                style={{ ...bare, color: SECONDARY, fontSize: 15, marginTop: (data?.tags?.length ?? 0) > 0 ? `calc(${U} / 2)` : 0 }}
-                value={tagInput}
-                disabled={busy}
-                placeholder="Add a tag, then Enter"
-                onChange={(e) => setTagInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && tagInput.trim()) void addTag(tagInput.trim());
-                }}
-              />
-            </div>,
-          )}
         </div>
     </div>
   );

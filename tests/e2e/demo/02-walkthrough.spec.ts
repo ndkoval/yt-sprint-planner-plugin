@@ -87,26 +87,35 @@ test.describe('App walkthrough', () => {
     await expect(board.getByLabel('Lane Backlog').locator('[title*="Mobile responsive"]')).toBeVisible();
     await settle(page, 900);
 
-    // 6. Double-click a card → the issue opens as an IN-PAGE overlay OVER the planner (dimmed
-    // behind it), never a new tab/window. Edit a field right there, then close — without leaving
-    // the plan.
-    await cap.say('Double-click any issue to open it right here — over the plan, never a new tab.');
+    // 6. Double-click a card → the issue opens in an in-page overlay over the dimmed plan (never
+    // a new tab). Edit a field right there, then close to return to the plan.
+    await cap.say('Double-click any issue to open it right here — over your plan, never a new tab.');
     const checkoutCard = board.locator('[title*="Checkout API"]').first();
     await moveTo(page, checkoutCard);
     await checkoutCard.dblclick();
     const overlay = board.locator('[data-test="scp-issue-overlay"]');
     await expect(overlay).toBeVisible();
-    await settle(page, 1000);
-    await cap.say('The full issue — title, description, comments, fields and tags — all editable in place.');
-    // Change the State to show live editing.
-    const stateSelect = overlay.getByLabel('State');
-    if (await stateSelect.count()) {
-      const opts = await stateSelect.locator('option').allTextContents();
-      if (opts.length > 1) await stateSelect.selectOption({ label: opts[opts.length - 1]! }).catch(() => {});
-      await settle(page, 1400);
+    await settle(page, 900);
+
+    // Add details: type a description right in the overlay (saves on blur).
+    await cap.say('Add details — type a description right here.');
+    const descBox = overlay.getByLabel('Issue description');
+    await descBox.click();
+    await descBox.pressSequentially('Harden checkout: retries, idempotency keys, and clearer error states.', { delay: 18 });
+    await descBox.blur();
+    await settle(page, 1400);
+
+    // Change a field: set the priority.
+    await cap.say('Change any field — here, bump the priority.');
+    const prioSelect = overlay.getByLabel('Priority');
+    if (await prioSelect.count()) {
+      const opts = await prioSelect.locator('option').allTextContents();
+      const target = opts.find((o) => /critical|major|high/i.test(o)) ?? opts[opts.length - 1];
+      if (target) await prioSelect.selectOption({ label: target }).catch(() => {});
+      await settle(page, 1500);
     }
     await info.attach('issue-overlay.png', { body: await page.screenshot(), contentType: 'image/png' }).catch(() => {});
-    await cap.say('Save happens instantly — then close and you’re back on your plan.');
+    await cap.say('Every change saves instantly — then close and you’re back on your plan.');
     await overlay.getByRole('button', { name: /Close/ }).first().click().catch(() => {});
     await expect(overlay).toBeHidden();
     await settle(page, 800);
