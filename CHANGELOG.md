@@ -2,6 +2,40 @@
 
 All notable changes to the Sprint Capacity Planner are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-07-21
+
+Compliance rewrite to align with the approved YouTrack app patterns, plus fixes for
+the reviewer-reported issues.
+
+### Fixed
+
+- **Project settings widget no longer fails to load.** The widget now registers with
+  the host (`YTApp.register()`) eagerly before rendering and shows an explicit message
+  if registration fails, instead of surfacing YouTrack's opaque "Unable to load — an
+  unexpected error occurred" banner.
+- **`manifest.json`:** removed the unsupported top-level `scopes` field (it was silently
+  ignored). Access is now declared per widget via the `permissions` array using real
+  keys (`READ_ISSUE`).
+- **`settings.json`:** rewritten as a JSON Schema object (`type`/`title`/`properties`),
+  the format YouTrack expects, instead of a custom `{settings:[…]}` array.
+
+### Changed
+
+- **Correct API usage.** The backend no longer calls YouTrack's REST API over HTTP with
+  a stored admin token. It runs in-process on YouTrack's app backend runtime
+  (`ctx.currentUser`, `entities.Project.findByKey`, project extension properties), and
+  the widgets read/write native data (boards, sprints, issues) through the current
+  user's own session (`host.fetchYouTrack`), so YouTrack enforces each caller's real
+  permissions. No tokens are stored.
+- **Metrics are computed live on read** from the current issue set instead of being
+  cached and repaired by workflow rules. This removed five on-change/on-schedule rules
+  and the shared workflow helper module.
+- **One scheduled workflow remains** (availability reminders): daily at a staggered
+  off-peak minute, `muteUpdateNotifications: true`, self-limiting per project — replacing
+  the previous hourly `0 0 * * * ?` reconciliation sweep and the always-true guards.
+- App state is stored as versioned, project-scoped JSON (`scpConfigJson`,
+  `scpSprintDataJson`); users are keyed by login end to end.
+
 ## [0.1.2] — 2026-07-20
 
 - Fix install on YouTrack instances that strictly validate the manifest:

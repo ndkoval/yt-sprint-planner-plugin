@@ -1,9 +1,9 @@
 {
-  "$schema": "https://www.jetbrains.com/help/youtrack/devportal-apps/apps-manifest.html",
+  "$schema": "https://json.schemastore.org/youtrack-app.json",
   "name": "sprint-capacity-planner",
   "title": "Sprint Capacity Planner",
   "description": "Capacity planning, computed metrics and a one-click next-Sprint button on top of native YouTrack Sprints. No service issues, no locks, no committed scope.",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "vendor": {
     "name": "Nikita Koval",
     "url": "https://github.com/ndkoval/yt-sprint-planner-plugin"
@@ -17,31 +17,24 @@
       "name": "Sprint Capacity",
       "indexPath": "widgets/project-tab/index.html",
       "extensionPoint": "PROJECT_SETTINGS",
-      "description": "Sprint capacity planning for a project — planning plus manager configuration in one place."
+      "description": "Sprint capacity planning for a project — planning plus manager configuration in one place.",
+      "permissions": ["READ_ISSUE"]
     },
     {
       "key": "sprint-capacity-issue",
       "name": "Sprint Planner",
       "indexPath": "widgets/issue-planner/index.html",
       "extensionPoint": "ISSUE_OPTIONS_MENU_ITEM",
-      "description": "Open the Sprint Capacity Planner for this issue's project (e.g. from a board card)."
+      "description": "Open the Sprint Capacity Planner for this issue's project (e.g. from a board card).",
+      "permissions": ["READ_ISSUE"]
     },
     {
       "key": "sprint-capacity-dashboard",
       "name": "Sprint Planner",
       "indexPath": "widgets/dashboard-planner/index.html",
       "extensionPoint": "DASHBOARD_WIDGET",
-      "description": "Sprint Capacity Planner widget for dashboards and the project overview."
+      "description": "Sprint Capacity Planner widget for dashboards and the project overview.",
+      "permissions": ["READ_ISSUE"]
     }
-  ],
-  "backend": {
-    "entryPoint": "backend.js"
-  },
-  "scopes": [
-    "Agile.Read",
-    "Agile.Update",
-    "Issue.Read",
-    "Issue.Update",
-    "Project.Read"
   ]
 }

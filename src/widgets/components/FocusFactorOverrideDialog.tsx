@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import Dialog from '@jetbrains/ring-ui-built/components/dialog/dialog';
 import Button from '@jetbrains/ring-ui-built/components/button/button';
 import Input, { Size as InputSize } from '@jetbrains/ring-ui-built/components/input/input';
-import type { OverrideFocusFactorRequest } from '../../shared/api';
 import { formatPercent } from './format';
 
 export interface FocusFactorOverrideDialogProps {
@@ -10,7 +9,7 @@ export interface FocusFactorOverrideDialogProps {
   currentValue: number;
   saving?: boolean;
   onCancel(): void;
-  onSubmit(request: OverrideFocusFactorRequest): void;
+  onSubmit(request: { newValue: number; reason: string }): void;
 }
 
 /**

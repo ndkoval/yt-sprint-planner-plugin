@@ -5,7 +5,7 @@
 import { ZodError } from 'zod';
 import type { ApiError, ApiErrorCode } from '../shared/api.js';
 
-/** HTTP status paired with each error code. */
+/** HTTP-equivalent status paired with each error code (kept for log readability). */
 const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   VALIDATION_FAILED: 400,
   NOT_CONFIGURED: 409,
@@ -13,9 +13,7 @@ const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   NOT_FOUND: 404,
   CAPACITY_REVISION_CONFLICT: 409,
   CONFIG_REVISION_CONFLICT: 409,
-  BOARD_PERMISSION_REQUIRED: 403,
   SPRINT_ALREADY_EXISTS: 409,
-  CALIBRATION_UNAVAILABLE: 409,
   INTERNAL_ERROR: 500,
 };
 
@@ -94,8 +92,3 @@ export const capacityConflict = (): AppError =>
   );
 export const configConflict = (): AppError =>
   new AppError('CONFIG_REVISION_CONFLICT', 'Settings were changed by another user.');
-export const boardPermissionRequired = (): AppError =>
-  new AppError(
-    'BOARD_PERMISSION_REQUIRED',
-    'You do not have permission to modify this board.',
-  );

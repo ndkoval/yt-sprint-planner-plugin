@@ -1,430 +1,511 @@
 /**
- * Typed HTTP client for the Sprint Capacity Planner backend (§18).
+ * Typed client facade for the Sprint Capacity Planner widgets.
  *
- * The backend exposes a single catch-all endpoint under the app's base path and the
- * widgets call it with paths like `/sprints/143-7/capacity/me`. Every call is scoped
- * to a project via `?projectId=…`, and every non-2xx response is an {@link ApiError}
- * envelope which we surface as a typed {@link ApiClientError}.
+ * Composition (see ../shared/api.ts):
+ *  - Native YouTrack data → {@link NativeYouTrack} over `host.fetchYouTrack`
+ *    (current user's session; YouTrack enforces real permissions).
+ *  - App-owned state → the app backend over `host.fetchApp` (server-side authz).
+ *  - Sprint metrics → computed live here with the shared domain math.
  *
- * The transport is isolated behind {@link HostBridge} because YouTrack embeds widgets
- * in an iframe and exposes an SDK-specific host object to reach the app backend and
- * learn the current project id. Swapping SDK versions should only touch the bridge.
+ * The public method surface is what the components consume; keep it stable.
  */
+import {
+  bootstrapFocusFactor,
+  computeMetrics,
+  firstSprintDates,
+  isCompletedSprint,
+  isDuplicateName,
+  nextFocusFactor,
+  nextSprintDates,
+  observedFocusFactor,
+  rawCapacityMinutes,
+  renderSprintName,
+  utcMsToIso,
+  type FocusFactorResult,
+} from '../domain/index.js';
 import type {
+  ApiError,
+  ApiErrorCode,
+  BackendEnvelope,
+  BoardSummary,
   ConfigResponse,
-  ConfigValidationResponse,
   CreateNextSprintRequest,
-  DiagnosticsResponse,
-  ExcludeCalibrationRequest,
+  IssueView,
   OverrideFocusFactorRequest,
   PatchCapacityRequest,
   PatchSprintDetailsRequest,
+  PlanIssueRequest,
+  ProjectFieldSummary,
   PutConfigRequest,
   SprintSummary,
   SprintView,
-  ApiError,
-  ApiErrorCode,
-  BoardSummary,
-  IssueView,
   UserSummary,
-  ProjectFieldSummary,
-} from '../shared/api';
+} from '../shared/api.js';
+import type { ProjectConfig, SprintEntry } from '../shared/types.js';
+import type { HostRequestInit, WidgetHost } from './host.js';
+import { buildSprintView, toEffortIssue, toIssueView } from './sprint-view.js';
+import { NativeYouTrack, type YtSprint } from './youtrack-client.js';
 
-/** RequestInit-like options the bridge understands (a subset of fetch's). */
-export interface HostRequestInit {
-  method?: string;
-  body?: string;
-  headers?: Record<string, string>;
-}
+export { buildSprintView } from './sprint-view.js';
 
-/**
- * The seam between the widgets and the YouTrack host page. A real implementation
- * wraps the Apps SDK host object; tests can supply a fake.
- */
-export interface HostBridge {
-  /** The current project id the widget is rendered for. */
-  resolveProjectId(): Promise<string>;
-  /** The current viewer's stable user id, or null when the host cannot provide it. */
-  resolveUserId(): Promise<string | null>;
-  /** Perform an app-backend request for an app-relative `path`. Returns the raw Response. */
-  fetch(path: string, init?: HostRequestInit): Promise<Response>;
-  /**
-   * Call the YouTrack REST API directly (path relative to `/api/`, e.g. `issues/AGP-1`) in the
-   * CURRENT USER's context — so YouTrack enforces the user's own permissions (no app-side IDOR).
-   * Returns the parsed JSON. Used by the in-page issue editor.
-   */
-  fetchYouTrack(path: string, init?: HostRequestInit): Promise<unknown>;
-  /** Expand the widget to a full-page modal overlay over the host page (and restore it). */
-  enterModalMode(): Promise<void>;
-  exitModalMode(): Promise<void>;
-}
+/** HTTP-equivalent status by error code (for display/telemetry parity). */
+const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
+  VALIDATION_FAILED: 400,
+  NOT_CONFIGURED: 409,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  CAPACITY_REVISION_CONFLICT: 409,
+  CONFIG_REVISION_CONFLICT: 409,
+  SPRINT_ALREADY_EXISTS: 409,
+  INTERNAL_ERROR: 500,
+};
 
-/**
- * Minimal shape of the YouTrack Apps host object exposed on `window`.
- *
- * The widget receives a `host` via `await YTApp.register()` exposing
- * `host.fetchApp(relativeUrl, {method, body, query})`, and the active project comes from
- * `YTApp.entity`. This is the ONLY place that touches the SDK. Confirmed working on
- * YouTrack 2025.3 (the installed widgets drive the backend through this path end to end).
- */
-interface YouTrackHost {
-  fetchApp(
-    relativeUrl: string,
-    options: { method?: string; body?: unknown; query?: Record<string, string> },
-  ): Promise<unknown>;
-  fetchYouTrack?(
-    relativeUrl: string,
-    options?: { method?: string; body?: unknown; query?: Record<string, string> },
-  ): Promise<unknown>;
-  enterModalMode?(): void | Promise<void>;
-  exitModalMode?(): void | Promise<void>;
-}
-
-interface YTAppGlobal {
-  register?(): Promise<YouTrackHost>;
-  // In a project context `entity` is the project; in an issue context it is the issue,
-  // which carries its `project`. We accept either so the planner works from the project
-  // settings tab, an issue action, or a dashboard/project-overview widget.
-  entity?: { id?: string; project?: { id?: string } };
-  me?: { id?: string };
-}
-
-interface AppWindow extends Window {
-  YTApp?: YTAppGlobal;
-}
-
-/** Error thrown for any non-2xx backend response, carrying the structured envelope. */
+/** Error thrown for any failed backend call, carrying the structured envelope. */
 export class ApiClientError extends Error {
   readonly status: number;
   readonly code: ApiErrorCode;
   readonly correlationId: string;
   readonly details: Record<string, unknown>;
 
-  constructor(status: number, error: ApiError) {
+  constructor(error: ApiError) {
     super(error.message);
     this.name = 'ApiClientError';
-    this.status = status;
+    this.status = STATUS_BY_CODE[error.code] ?? 500;
     this.code = error.code;
     this.correlationId = error.correlationId;
     this.details = error.details;
   }
 
-  /** True when the failure is an optimistic-concurrency conflict (§ concurrency). */
+  /** True when the failure is an optimistic-concurrency conflict. */
   get isConflict(): boolean {
     return this.code === 'CAPACITY_REVISION_CONFLICT' || this.code === 'CONFIG_REVISION_CONFLICT';
   }
 }
 
-function isApiError(value: unknown): value is ApiError {
-  if (typeof value !== 'object' || value === null) return false;
-  const v = value as Record<string, unknown>;
-  return typeof v.code === 'string' && typeof v.message === 'string';
-}
-
-/**
- * Default {@link HostBridge} reading the YouTrack host object from `window`. Falls back
- * to a same-origin `fetch` against `APP_BASE_PATH` so the widget still works when served
- * outside the iframe during local development.
- */
-export class WindowHostBridge implements HostBridge {
-  // Dev fallback base path (standalone harness serves the backend here).
-  private static readonly APP_BASE_PATH = '/api/apps/sprint-capacity-planner/backend';
-  // Host mode: the tunnel endpoint, relative to the app. `backend` is the handler file
-  // (backend.js at the package root), `api` is the endpoint path declared in it.
-  private static readonly API_ENDPOINT = 'backend/api';
-
-  private hostPromise: Promise<YouTrackHost | null> | null = null;
-
-  private async host(): Promise<YouTrackHost | null> {
-    if (this.hostPromise === null) {
-      this.hostPromise = (async () => {
-        const w = window as AppWindow;
-        // Register with the host to obtain the app-scoped `host` (confirmed on 2025.3).
-        if (w.YTApp?.register) {
-          try {
-            return await w.YTApp.register();
-          } catch {
-            return null;
-          }
-        }
-        return null;
-      })();
-    }
-    return this.hostPromise;
-  }
-
-  async resolveProjectId(): Promise<string> {
-    const w = window as AppWindow;
-    // Resolve the project the widget is scoped to. In an issue context (issue-planner)
-    // YTApp.entity is the issue, which carries its project (entity.project.id); in a project
-    // context (project tab / settings) YTApp.entity is the project itself (entity.id). A
-    // dashboard/standalone context without an entity falls back to an explicit ?projectId.
-    // The planner is project-scoped, so a context with none surfaces a clear error the widget
-    // renders as a message.
-    const fromProject = w.YTApp?.entity?.project?.id;
-    if (typeof fromProject === 'string' && fromProject.length > 0) return fromProject;
-    const fromEntity = w.YTApp?.entity?.id;
-    if (typeof fromEntity === 'string' && fromEntity.length > 0) return fromEntity;
-    const fromQuery = new URLSearchParams(window.location.search).get('projectId');
-    if (fromQuery !== null && fromQuery.length > 0) return fromQuery;
-    throw new Error('Unable to resolve the current project id from the YouTrack host.');
-  }
-
-  async resolveUserId(): Promise<string | null> {
-    const w = window as AppWindow;
-    // The current viewer, exposed by the host on YTApp.me.
-    const id = w.YTApp?.me?.id;
-    return typeof id === 'string' && id.length > 0 ? id : null;
-  }
-
-  async fetch(path: string, init?: HostRequestInit): Promise<Response> {
-    const host = await this.host();
-    const body = init?.body !== undefined ? (JSON.parse(init.body) as unknown) : undefined;
-    if (host) {
-      // YouTrack app HTTP handlers only allow GET/POST/PUT/DELETE at fixed paths, so every
-      // call is tunnelled as a POST to the single `api` endpoint carrying the real method +
-      // app-relative path. The backend replies with `{ status, body }` (the transport is
-      // always 200); we reconstruct a Response with the real status. The endpoint lives at
-      // `<handlerFile>/api` where the handler file is `backend/index`. See backend/index.ts.
-      const raw = (await host.fetchApp(`${WindowHostBridge.API_ENDPOINT}`, {
-        method: 'POST',
-        body: { method: init?.method ?? 'GET', path, ...(body !== undefined ? { body } : {}) },
-      })) as { status?: number; body?: unknown } | null;
-      const status = typeof raw?.status === 'number' ? raw.status : 200;
-      return new Response(JSON.stringify(raw?.body ?? null), {
-        status,
-        headers: { 'content-type': 'application/json' },
-      });
-    }
-    // Dev fallback: same-origin fetch against the mounted base path (standalone harness).
-    const url = `${WindowHostBridge.APP_BASE_PATH}${path}`;
-    return window.fetch(url, {
-      method: init?.method ?? 'GET',
-      headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
-      ...(init?.body !== undefined ? { body: init.body } : {}),
-    });
-  }
-
-  async fetchYouTrack(path: string, init?: HostRequestInit): Promise<unknown> {
-    const host = await this.host();
-    const body = init?.body !== undefined ? (JSON.parse(init.body) as unknown) : undefined;
-    if (host?.fetchYouTrack) {
-      return host.fetchYouTrack(path, {
-        method: init?.method ?? 'GET',
-        ...(body !== undefined ? { body } : {}),
-      });
-    }
-    // Dev fallback: same-origin YouTrack REST (standalone harness / tests).
-    const res = await window.fetch(`/api/${path}`, {
-      method: init?.method ?? 'GET',
-      headers: { 'content-type': 'application/json', accept: 'application/json', ...(init?.headers ?? {}) },
-      ...(init?.body !== undefined ? { body: init.body } : {}),
-    });
-    return res.json().catch(() => null);
-  }
-
-  async enterModalMode(): Promise<void> {
-    const host = await this.host();
-    await host?.enterModalMode?.();
-  }
-
-  async exitModalMode(): Promise<void> {
-    const host = await this.host();
-    await host?.exitModalMode?.();
-  }
-}
-
-/** Typed client bound to a {@link HostBridge}. */
+/** Typed client bound to a {@link WidgetHost}. */
 export class ApiClient {
-  private projectIdCache: string | null = null;
+  private readonly yt: NativeYouTrack;
+  private projectRef: { id: string; key: string } | null = null;
+  private configCache: ProjectConfig | null = null;
 
-  constructor(private readonly bridge: HostBridge = new WindowHostBridge()) {}
-
-  /** The current viewer's user id, or null when the host cannot provide it. */
-  resolveUserId(): Promise<string | null> {
-    return this.bridge.resolveUserId();
+  constructor(private readonly host: WidgetHost) {
+    this.yt = new NativeYouTrack(host);
   }
 
-  /** Call the YouTrack REST API directly (in the current user's context). See {@link HostBridge}. */
+  // --- Context ------------------------------------------------------------
+
+  /** The current viewer's login, or null when the host cannot provide it. */
+  async resolveUserId(): Promise<string | null> {
+    return this.host.me.login.length > 0 ? this.host.me.login : null;
+  }
+
+  /**
+   * Resolve the project this widget is scoped to. In a project context YTApp.entity
+   * is the project; in an issue context it is the issue carrying its project; a
+   * dashboard falls back to an explicit ?projectId. The key (shortName) is what the
+   * backend uses to resolve the Project entity.
+   */
+  private async project(): Promise<{ id: string; key: string }> {
+    if (this.projectRef !== null) return this.projectRef;
+    const entity = this.host.entity;
+    const fromProject = entity?.project;
+    const id =
+      (typeof fromProject?.id === 'string' && fromProject.id.length > 0 ? fromProject.id : null) ??
+      (typeof entity?.id === 'string' && entity.id.length > 0 ? entity.id : null) ??
+      new URLSearchParams(window.location.search).get('projectId');
+    if (id === null || id.length === 0) {
+      throw new Error('Unable to resolve the current project from the YouTrack host.');
+    }
+    const key =
+      (typeof fromProject?.shortName === 'string' && fromProject.shortName.length > 0
+        ? fromProject.shortName
+        : null) ??
+      (typeof entity?.shortName === 'string' && entity.shortName.length > 0
+        ? entity.shortName
+        : null) ??
+      (await this.yt.getProject(id)).key;
+    this.projectRef = { id, key };
+    return this.projectRef;
+  }
+
+  /** Call the YouTrack REST API directly (in the current user's context). */
   fetchYouTrack(path: string, init?: HostRequestInit): Promise<unknown> {
-    return this.bridge.fetchYouTrack(path, init);
+    return this.host.fetchYouTrack(path, init);
   }
 
-  /** Expand the widget into a full-page modal overlay over the host page (and restore it). */
   enterModalMode(): Promise<void> {
-    return this.bridge.enterModalMode();
+    return this.host.enterModalMode();
   }
 
   exitModalMode(): Promise<void> {
-    return this.bridge.exitModalMode();
+    return this.host.exitModalMode();
   }
 
-  private async projectId(): Promise<string> {
-    if (this.projectIdCache === null) {
-      this.projectIdCache = await this.bridge.resolveProjectId();
+  // --- Backend transport ----------------------------------------------------
+
+  private async app<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+    const { key } = await this.project();
+    const raw = (await this.host.fetchApp(`backend/${path}`, {
+      method,
+      query: { project: key },
+      ...(body !== undefined ? { body } : {}),
+    })) as BackendEnvelope<T> | null;
+    if (raw && typeof raw === 'object' && 'ok' in raw) {
+      if (raw.ok) return raw.data;
+      throw new ApiClientError(raw.error);
     }
-    return this.projectIdCache;
+    throw new ApiClientError({
+      code: 'INTERNAL_ERROR',
+      message: 'The app backend returned an unexpected response.',
+      details: {},
+      correlationId: '',
+    });
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const projectId = await this.projectId();
-    const sep = path.includes('?') ? '&' : '?';
-    const fullPath = `${path}${sep}projectId=${encodeURIComponent(projectId)}`;
-    const init: HostRequestInit = { method };
-    if (body !== undefined) init.body = JSON.stringify(body);
-    const response = await this.bridge.fetch(fullPath, init);
-    const text = await response.text();
-    const payload: unknown = text.length > 0 ? JSON.parse(text) : null;
-    if (!response.ok) {
-      if (isApiError(payload)) throw new ApiClientError(response.status, payload);
-      throw new ApiClientError(response.status, {
-        code: 'INTERNAL_ERROR',
-        message: `Request failed with status ${response.status}.`,
+  private async requireConfig(): Promise<ProjectConfig> {
+    if (this.configCache !== null) return this.configCache;
+    const response = await this.getConfig();
+    if (!response.config) {
+      throw new ApiClientError({
+        code: 'NOT_CONFIGURED',
+        message: 'Board is not configured.',
         details: {},
         correlationId: '',
       });
     }
-    return payload as T;
+    return response.config;
   }
 
   // --- Configuration -------------------------------------------------------
 
-  getConfig(): Promise<ConfigResponse> {
-    return this.request<ConfigResponse>('GET', '/config');
+  async getConfig(): Promise<ConfigResponse> {
+    const response = await this.app<ConfigResponse>('GET', 'config');
+    this.configCache = response.config;
+    return response;
   }
 
-  putConfig(body: PutConfigRequest): Promise<ConfigResponse> {
-    return this.request<ConfigResponse>('PUT', '/config', body);
+  async putConfig(body: PutConfigRequest): Promise<ConfigResponse> {
+    const response = await this.app<ConfigResponse>('POST', 'config', body);
+    this.configCache = response.config;
+    return response;
   }
 
-  validateConfig(): Promise<ConfigValidationResponse> {
-    return this.request<ConfigValidationResponse>('GET', '/config/validation');
-  }
-
-  getBoards(): Promise<BoardSummary[]> {
-    return this.request<BoardSummary[]>('GET', '/boards');
+  async getBoards(): Promise<BoardSummary[]> {
+    const boards = await this.yt.listBoards();
+    return boards.map((b) => ({ id: b.id, name: b.name, usesSprints: b.usesSprints }));
   }
 
   /** Search users for the participant / assignee pickers. */
-  searchUsers(query: string): Promise<UserSummary[]> {
-    return this.request<UserSummary[]>('GET', `/users?query=${encodeURIComponent(query)}`);
+  async searchUsers(query: string): Promise<UserSummary[]> {
+    return this.yt.searchUsers(query);
   }
 
   /** Project custom fields for the effort-field pickers. */
-  getProjectFields(): Promise<ProjectFieldSummary[]> {
-    return this.request<ProjectFieldSummary[]>('GET', '/project-fields');
+  async getProjectFields(): Promise<ProjectFieldSummary[]> {
+    const { id } = await this.project();
+    return this.yt.getProjectCustomFields(id);
   }
 
   // --- Sprints -------------------------------------------------------------
 
-  listSprints(): Promise<SprintSummary[]> {
-    return this.request<SprintSummary[]>('GET', '/sprints');
+  private sprintEntries(): Promise<Record<string, SprintEntry>> {
+    return this.app<{ sprints: Record<string, SprintEntry> }>('GET', 'sprint-data').then(
+      (d) => d.sprints,
+    );
   }
 
-  getSprint(sprintId: string): Promise<SprintView> {
-    return this.request<SprintView>('GET', `/sprints/${encodeURIComponent(sprintId)}`);
+  async listSprints(): Promise<SprintSummary[]> {
+    const config = await this.requireConfig();
+    const [sprints, entries] = await Promise.all([
+      this.yt.listSprints(config.boardId),
+      this.sprintEntries(),
+    ]);
+    const summaries: SprintSummary[] = sprints.map((s) => ({
+      id: s.id,
+      name: s.name,
+      start: s.start ?? '',
+      finish: s.finish ?? '',
+      archived: s.archived,
+      managed: s.id in entries,
+      sequence: entries[s.id]?.sequence ?? 0,
+      unresolvedIssueCount: 0,
+    }));
+    // The carry-over preview needs the unresolved count of the LATEST managed Sprint.
+    const latest = summaries
+      .filter((s) => s.managed)
+      .reduce<SprintSummary | null>((a, s) => (a === null || s.sequence > a.sequence ? s : a), null);
+    if (latest) {
+      const issues = await this.yt.getSprintIssues(
+        config.boardId,
+        latest.id,
+        config.originalEffortField,
+        config.currentEffortField,
+      );
+      latest.unresolvedIssueCount = issues.filter((i) => !i.resolved).length;
+    }
+    return summaries;
   }
 
-  createNextSprint(body: CreateNextSprintRequest): Promise<SprintView> {
-    return this.request<SprintView>('POST', '/sprints/create-next', body);
+  async getSprint(sprintId: string): Promise<SprintView> {
+    const config = await this.requireConfig();
+    const [native, entries] = await Promise.all([
+      this.yt.getSprint(config.boardId, sprintId),
+      this.sprintEntries(),
+    ]);
+    if (!native) {
+      throw new ApiClientError({
+        code: 'NOT_FOUND',
+        message: `Sprint ${sprintId} was not found.`,
+        details: {},
+        correlationId: '',
+      });
+    }
+    const issues =
+      native.start !== null && native.finish !== null
+        ? await this.yt.getSprintIssues(
+            config.boardId,
+            sprintId,
+            config.originalEffortField,
+            config.currentEffortField,
+          )
+        : [];
+    return buildSprintView(native, entries[sprintId] ?? null, issues, Date.now());
   }
 
   /** The Sprint's issues (with assignee + effort) for the planning board. */
-  listSprintIssues(sprintId: string): Promise<IssueView[]> {
-    return this.request<IssueView[]>('GET', `/sprints/${encodeURIComponent(sprintId)}/issues`);
+  async listSprintIssues(sprintId: string): Promise<IssueView[]> {
+    const config = await this.requireConfig();
+    const issues = await this.yt.getSprintIssues(
+      config.boardId,
+      sprintId,
+      config.originalEffortField,
+      config.currentEffortField,
+    );
+    return issues.map(toIssueView);
   }
 
   /** The backlog pool (configured search, minus issues already in the Sprint). */
-  listBacklog(sprintId: string): Promise<IssueView[]> {
-    return this.request<IssueView[]>('GET', `/sprints/${encodeURIComponent(sprintId)}/backlog`);
+  async listBacklog(sprintId: string): Promise<IssueView[]> {
+    const config = await this.requireConfig();
+    const query = (config.backlogQuery ?? '').trim();
+    if (query.length === 0) return [];
+    const [candidates, sprintIssues] = await Promise.all([
+      this.yt.searchIssues(query, config.originalEffortField, config.currentEffortField),
+      this.yt.getSprintIssues(
+        config.boardId,
+        sprintId,
+        config.originalEffortField,
+        config.currentEffortField,
+      ),
+    ]);
+    const inSprint = new Set(sprintIssues.map((i) => i.id));
+    return candidates.filter((i) => !inSprint.has(i.id) && !i.resolved).map(toIssueView);
   }
 
   /**
-   * Plan an issue (a board drag): pull it into/out of the Sprint and set its assignee in one
-   * action. Returns the reconciled SprintView so capacity load/remaining refresh.
+   * Plan an issue (a board drag): pull it into/out of the Sprint and set its assignee
+   * in one action. Runs as the current user, so YouTrack enforces the caller's board
+   * and issue permissions. Returns the refreshed SprintView.
    */
-  planIssue(
-    sprintId: string,
-    issueId: string,
-    body: { inSprint: boolean; assigneeId: string | null },
-  ): Promise<SprintView> {
-    return this.request<SprintView>(
-      'POST',
-      `/sprints/${encodeURIComponent(sprintId)}/issues/${encodeURIComponent(issueId)}/plan`,
-      body,
+  async planIssue(sprintId: string, issueId: string, body: PlanIssueRequest): Promise<SprintView> {
+    const config = await this.requireConfig();
+    const current = await this.yt.getSprintIssues(
+      config.boardId,
+      sprintId,
+      config.originalEffortField,
+      config.currentEffortField,
+    );
+    const alreadyInSprint = current.some((i) => i.id === issueId);
+    if (body.inSprint) {
+      if (!alreadyInSprint) await this.yt.addIssueToSprint(config.boardId, sprintId, issueId);
+      await this.yt.setIssueAssignee(issueId, body.assigneeId);
+    } else if (alreadyInSprint) {
+      await this.yt.removeIssueFromSprint(config.boardId, sprintId, issueId);
+    }
+    return this.getSprint(sprintId);
+  }
+
+  /**
+   * One-click "Create next Sprint": compute dates/sequence/name from the managed
+   * history, create the native Sprint (current user's own board permission), register
+   * the app state (sequence + seeded capacity), optionally carry unresolved issues over.
+   */
+  async createNextSprint(request: CreateNextSprintRequest): Promise<SprintView> {
+    const config = await this.requireConfig();
+    const [sprints, entries] = await Promise.all([
+      this.yt.listSprints(config.boardId),
+      this.sprintEntries(),
+    ]);
+    const managed = sprints.filter((s) => s.id in entries);
+    const previous = managed.reduce<YtSprint | null>(
+      (a, s) => (a === null || entries[s.id]!.sequence > entries[a.id]!.sequence ? s : a),
+      null,
+    );
+
+    const dates = previous?.finish
+      ? nextSprintDates(previous.finish, config.sprintLengthDays)
+      : firstSprintDates(utcMsToIso(Date.now()), config.sprintLengthDays);
+    const sequences = Object.values(entries).map((e) => e.sequence);
+    const sequence = sequences.length === 0 ? 1 : Math.max(...sequences) + 1;
+    const name = renderSprintName(config.nameTemplate, {
+      year: Number(dates.start.slice(0, 4)),
+      sequence,
+      startDate: dates.start,
+      finishDate: dates.finish,
+    });
+
+    // Duplicate checks — resume if an identical Sprint already exists.
+    const duplicate = managed.find((s) => s.start === dates.start && s.finish === dates.finish);
+    if (duplicate) return this.getSprint(duplicate.id);
+    if (isDuplicateName(name, sprints.map((s) => s.name))) {
+      throw new ApiClientError({
+        code: 'SPRINT_ALREADY_EXISTS',
+        message: `A Sprint named "${name}" already exists.`,
+        details: { name },
+        correlationId: '',
+      });
+    }
+
+    const factor = await this.computeNextFocusFactor(config, managed, entries);
+    const created = await this.yt.createSprint({
+      boardId: config.boardId,
+      name,
+      goal: request.goal ?? '',
+      start: dates.start,
+      finish: dates.finish,
+    });
+    await this.app('POST', 'sprint-register', {
+      sprint: { id: created.id, name: created.name, start: dates.start, finish: dates.finish },
+      focusFactor: factor.value,
+      focusFactorSource: factor.source,
+    });
+    if (request.moveUnresolvedIssues && previous) {
+      await this.yt.moveUnresolvedIssues(config.boardId, previous.id, created.id);
+    }
+    return this.getSprint(created.id);
+  }
+
+  /**
+   * Calibrate the next Sprint's Focus Factor from the latest completed, eligible
+   * managed Sprint (live figures — the completion is computed from current issues).
+   */
+  private async computeNextFocusFactor(
+    config: ProjectConfig,
+    managed: readonly YtSprint[],
+    entries: Record<string, SprintEntry>,
+  ): Promise<FocusFactorResult> {
+    const now = Date.now();
+    const eligible = managed
+      .filter((s) => s.finish !== null && isCompletedSprint(s.finish, now))
+      .filter((s) => !entries[s.id]!.excludedFromCalibration)
+      .filter((s) => rawCapacityMinutes(entries[s.id]!.capacity) > 0);
+    if (eligible.length === 0) return bootstrapFocusFactor();
+    const source = eligible.reduce((latest, s) =>
+      (s.finish ?? '') > (latest.finish ?? '') ? s : latest,
+    );
+    const entry = entries[source.id]!;
+    const issues = await this.yt.getSprintIssues(
+      config.boardId,
+      source.id,
+      config.originalEffortField,
+      config.currentEffortField,
+    );
+    const metrics = computeMetrics(
+      entry.capacity,
+      issues.map(toEffortIssue),
+      source.start!,
+      source.finish!,
+      entry.focusFactor,
+    );
+    const observed = observedFocusFactor(
+      metrics.completedOriginalEffortMinutes,
+      metrics.rawCapacityMinutes,
+    );
+    // Carry forward when nothing could be observed (no effort or no capacity).
+    const carryForward = metrics.originalEffortMinutes === 0 || observed === null;
+    return nextFocusFactor(
+      { previousFactor: entry.focusFactor, observed, carryForward },
+      { learningRate: config.learningRate },
     );
   }
 
-  patchSprintDetails(sprintId: string, body: PatchSprintDetailsRequest): Promise<SprintView> {
-    return this.request<SprintView>(
-      'PATCH',
-      `/sprints/${encodeURIComponent(sprintId)}/details`,
-      body,
-    );
-  }
-
-  recalculate(sprintId: string): Promise<SprintView> {
-    return this.request<SprintView>('POST', `/sprints/${encodeURIComponent(sprintId)}/recalculate`);
+  /** Edit native Sprint details, then resync the app snapshot (defaults recompute). */
+  async patchSprintDetails(sprintId: string, patch: PatchSprintDetailsRequest): Promise<SprintView> {
+    const config = await this.requireConfig();
+    const current = await this.yt.getSprint(config.boardId, sprintId);
+    if (!current) {
+      throw new ApiClientError({
+        code: 'NOT_FOUND',
+        message: `Sprint ${sprintId} was not found.`,
+        details: {},
+        correlationId: '',
+      });
+    }
+    if (patch.name !== undefined && patch.name.trim().length === 0) {
+      throw new ApiClientError({
+        code: 'VALIDATION_FAILED',
+        message: 'Sprint name is required.',
+        details: {},
+        correlationId: '',
+      });
+    }
+    const start = patch.start ?? current.start;
+    const finish = patch.finish ?? current.finish;
+    if (start && finish && finish <= start) {
+      throw new ApiClientError({
+        code: 'VALIDATION_FAILED',
+        message: 'Finish must be after start.',
+        details: {},
+        correlationId: '',
+      });
+    }
+    const updated = await this.yt.updateSprint(config.boardId, sprintId, patch);
+    if (updated.start !== null && updated.finish !== null) {
+      await this.app('POST', 'sprint-register', {
+        sprint: { id: sprintId, name: updated.name, start: updated.start, finish: updated.finish },
+      });
+    }
+    return this.getSprint(sprintId);
   }
 
   // --- Capacity ------------------------------------------------------------
 
-  patchMyCapacity(sprintId: string, body: PatchCapacityRequest): Promise<SprintView> {
-    return this.request<SprintView>(
-      'PATCH',
-      `/sprints/${encodeURIComponent(sprintId)}/capacity/me`,
-      body,
-    );
+  async patchMyCapacity(sprintId: string, body: PatchCapacityRequest): Promise<SprintView> {
+    await this.app('POST', 'capacity', { sprintId, target: 'me', ...body });
+    return this.getSprint(sprintId);
   }
 
-  patchUserCapacity(
+  async patchUserCapacity(
     sprintId: string,
     userId: string,
     body: PatchCapacityRequest,
   ): Promise<SprintView> {
-    return this.request<SprintView>(
-      'PATCH',
-      `/sprints/${encodeURIComponent(sprintId)}/capacity/${encodeURIComponent(userId)}`,
-      body,
-    );
+    await this.app('POST', 'capacity', { sprintId, target: { userId }, ...body });
+    return this.getSprint(sprintId);
   }
 
-  resetUserCapacity(sprintId: string, userId: string, expectedRevision: number): Promise<SprintView> {
-    return this.request<SprintView>(
-      'POST',
-      `/sprints/${encodeURIComponent(sprintId)}/capacity/${encodeURIComponent(userId)}/reset`,
-      { expectedRevision },
-    );
+  async resetUserCapacity(sprintId: string, userId: string, expectedRevision: number): Promise<SprintView> {
+    await this.app('POST', 'capacity-reset', { sprintId, userId, expectedRevision });
+    return this.getSprint(sprintId);
   }
 
-  // --- Focus factor / calibration -----------------------------------------
+  // --- Focus factor / calibration -------------------------------------------
 
-  overrideFocusFactor(sprintId: string, body: OverrideFocusFactorRequest): Promise<SprintView> {
-    return this.request<SprintView>(
-      'POST',
-      `/sprints/${encodeURIComponent(sprintId)}/focus-factor/override`,
-      body,
-    );
+  async overrideFocusFactor(
+    sprintId: string,
+    body: Omit<OverrideFocusFactorRequest, 'sprintId'>,
+  ): Promise<SprintView> {
+    await this.app('POST', 'focus-factor', { sprintId, ...body });
+    return this.getSprint(sprintId);
   }
 
-  excludeFromCalibration(sprintId: string, body: ExcludeCalibrationRequest): Promise<SprintView> {
-    return this.request<SprintView>(
-      'POST',
-      `/sprints/${encodeURIComponent(sprintId)}/calibration/exclude`,
-      body,
-    );
+  async excludeFromCalibration(sprintId: string, body: { reason: string }): Promise<SprintView> {
+    await this.app('POST', 'calibration', { sprintId, excluded: true, reason: body.reason });
+    return this.getSprint(sprintId);
   }
 
-  includeInCalibration(sprintId: string): Promise<SprintView> {
-    return this.request<SprintView>(
-      'POST',
-      `/sprints/${encodeURIComponent(sprintId)}/calibration/include`,
-    );
-  }
-
-  // --- Diagnostics (manager-only) -----------------------------------------
-
-  getDiagnostics(): Promise<DiagnosticsResponse> {
-    return this.request<DiagnosticsResponse>('GET', '/diagnostics');
+  async includeInCalibration(sprintId: string): Promise<SprintView> {
+    await this.app('POST', 'calibration', { sprintId, excluded: false });
+    return this.getSprint(sprintId);
   }
 }

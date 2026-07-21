@@ -1,30 +1,27 @@
 /**
- * Shared contract-test setup: a fully-seeded world (users, board, configured
- * project) plus small helpers to drive the app router. Individual tests mutate the
- * returned fake to model the scenario under test.
+ * Shared contract-test setup: a seeded project world plus small helpers to drive the
+ * backend request handlers directly. Individual tests mutate the returned env/project
+ * to model the scenario under test.
  */
-import { createApp } from '../../src/backend/app.js';
-import { fixedClock, type Clock } from '../../src/backend/clock.js';
-import type { Router, HttpMethod } from '../../src/backend/http/router.js';
+import type { RequestContext } from '../../src/backend/handlers.js';
 import type { ProjectConfig } from '../../src/shared/types.js';
-import type { YtUser } from '../../src/backend/repositories/youtrack-client.js';
-import { FakeYouTrack } from './fake-youtrack.js';
+import { FakeEnv, FakeProject } from './fake-env.js';
 
-export const PROJECT_ID = 'proj-1';
+export const PROJECT_KEY = 'AGP';
 export const BOARD_ID = 'board-1';
 export const MANAGERS_GROUP = 'Capacity Managers';
 
 /** A fixed "now" well after every seeded sprint window, so sprints read as completed. */
 export const NOW = Date.UTC(2026, 5, 1); // 2026-06-01
 
-export const MEMBER: YtUser = { id: '1-10', login: 'member', name: 'Member One' };
-export const MEMBER_2: YtUser = { id: '1-20', login: 'member2', name: 'Member Two' };
-export const MANAGER: YtUser = { id: '1-99', login: 'manager', name: 'Manager Boss' };
-export const DISABLED_USER: YtUser = { id: '1-30', login: 'disabled', name: 'Disabled User' };
+export const MEMBER = { login: 'member', name: 'Member One', groups: [] as string[] };
+export const MEMBER_2 = { login: 'member2', name: 'Member Two', groups: [] as string[] };
+export const MANAGER = { login: 'manager', name: 'Manager Boss', groups: [MANAGERS_GROUP] };
+export const LEADER = { login: 'leader', name: 'Project Leader', groups: [] as string[] };
 
 export function defaultConfig(overrides: Partial<ProjectConfig> = {}): ProjectConfig {
   return {
-    version: 1,
+    version: 2,
     boardId: BOARD_ID,
     originalEffortField: 'Original estimation',
     currentEffortField: 'Estimation',
@@ -34,64 +31,44 @@ export function defaultConfig(overrides: Partial<ProjectConfig> = {}): ProjectCo
     nameTemplate: 'AppGlass {year}-S{sequence}',
     backlogQuery: '',
     learningRate: 0.5,
+    managersGroup: MANAGERS_GROUP,
     participants: [
-      { userId: MEMBER.id, enabled: true, allocation: 1 },
-      { userId: MEMBER_2.id, enabled: true, allocation: 1 },
-      { userId: DISABLED_USER.id, enabled: false, allocation: 1 },
+      { userId: MEMBER.login, enabled: true, allocation: 1 },
+      { userId: MEMBER_2.login, enabled: true, allocation: 1 },
     ],
     ...overrides,
   };
 }
 
-/** Build a fake seeded with users, a sprint board, effort fields and (optionally) config. */
+export interface World {
+  env: FakeEnv;
+  project: FakeProject;
+}
+
+/**
+ * Build a fake env seeded with users, a project (led by LEADER), and — unless
+ * `configured: false` — a stored config document at the given revision.
+ */
 export function seedWorld(
-  options: { configured?: boolean; config?: ProjectConfig } = {},
-): FakeYouTrack {
-  const fake = new FakeYouTrack();
-  fake
-    .seedUser(MEMBER)
-    .seedUser(MEMBER_2)
-    .seedUser(MANAGER)
-    .seedUser(DISABLED_USER)
-    .seedBoard({ id: BOARD_ID, name: 'AppGlass Board', usesSprints: true, projectIds: [PROJECT_ID] })
-    .addGroupMember(MANAGERS_GROUP, MANAGER.id)
-    .setProjectFields(PROJECT_ID, [
-      { name: 'Original estimation', type: 'period', attachedToProject: true },
-      { name: 'Estimation', type: 'period', attachedToProject: true },
-      { name: 'Text Field', type: 'string', attachedToProject: true },
-    ]);
-  fake.currentUserId = MEMBER.id;
+  options: { configured?: boolean; config?: ProjectConfig; revision?: number; now?: number } = {},
+): World {
+  const env = new FakeEnv(options.now ?? NOW);
+  env.seedUser(MEMBER).seedUser(MEMBER_2).seedUser(MANAGER).seedUser(LEADER);
+  const project = env.seedProject(PROJECT_KEY, LEADER.login);
   if (options.configured !== false) {
-    fake.seedConfiguredProject({
-      projectId: PROJECT_ID,
-      config: options.config ?? defaultConfig(),
-      revision: 1,
-      managersGroup: MANAGERS_GROUP,
-    });
+    project.setProperty(
+      'scpConfigJson',
+      JSON.stringify({
+        version: 2,
+        revision: options.revision ?? 1,
+        config: options.config ?? defaultConfig(),
+      }),
+    );
   }
-  return fake;
+  return { env, project };
 }
 
-export function app(fake: FakeYouTrack, clock: Clock = fixedClock(NOW)): Router {
-  return createApp({ client: fake, clock });
-}
-
-export interface RequestOptions {
-  query?: Record<string, string>;
-  body?: unknown;
-}
-
-/** Drive one request through the router with projectId defaulted into the query. */
-export function request(
-  router: Router,
-  method: HttpMethod,
-  path: string,
-  opts: RequestOptions = {},
-): Promise<{ status: number; body: unknown }> {
-  return router.handle({
-    method,
-    path,
-    query: { projectId: PROJECT_ID, ...(opts.query ?? {}) },
-    body: opts.body ?? null,
-  });
+/** Build the request context for a given caller login against the seeded project. */
+export function ctxFor(world: World, login: string): RequestContext {
+  return { env: world.env, user: world.env.caller(login), project: world.project };
 }

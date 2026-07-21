@@ -1,15 +1,16 @@
 /**
  * Authorization decisions. See §16. These are PURE decision functions; the backend
- * enforces them server-side on every mutation. Frontend visibility is never
+ * enforces them server-side on every app-state mutation. Frontend visibility is never
  * authorization.
  *
  * A user is a "manager" iff they belong to the configured Capacity Managers group.
- * Board-level actions (create / edit native Sprint) additionally require the caller's
- * real YouTrack Board permission, which is checked at the REST boundary — not here.
+ * Native Sprint mutations (create / edit) run through the current user's own REST
+ * session, so YouTrack itself enforces the real board permission — not this layer.
  */
 import type { UserId } from '../../shared/types.js';
 
 export interface Principal {
+  /** User login. */
   userId: UserId;
   isManager: boolean;
 }
@@ -58,11 +59,11 @@ export function canAssignIssues(principal: Principal): boolean {
 }
 
 /**
- * Creating / editing the native Sprint requires manager role AND a real Board
- * permission. The Board permission is resolved from YouTrack at the REST boundary
- * and passed in as `hasBoardPermission`.
+ * Creating / editing the native Sprint is a manager planning action in the app;
+ * YouTrack additionally enforces the caller's real board permission because the
+ * native mutation runs in the current user's own REST session.
  */
-export function canCreateSprint(principal: Principal, hasBoardPermission: boolean): boolean {
-  return principal.isManager && hasBoardPermission;
+export function canCreateSprint(principal: Principal): boolean {
+  return principal.isManager;
 }
 export const canEditSprintDetails = canCreateSprint;

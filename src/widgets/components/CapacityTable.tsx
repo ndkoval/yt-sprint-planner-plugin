@@ -105,7 +105,7 @@ export function CapacityTable({
           const noteId = `note-${row.userId}`;
           return (
             <tr key={row.userId}>
-              <td style={cellStyle}>{row.displayNameSnapshot || row.loginSnapshot}</td>
+              <td style={cellStyle}>{row.displayNameSnapshot || row.userId}</td>
               <td style={cellStyle}>{formatDaysValue(row.defaultMinutes, hoursPerDay)}</td>
               <td style={cellStyle}>
                 {editable ? (

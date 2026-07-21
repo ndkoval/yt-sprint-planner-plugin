@@ -58,11 +58,9 @@ describe('manager-only actions', () => {
 });
 
 describe('canCreateSprint / canEditSprintDetails', () => {
-  it('requires manager AND board permission', () => {
-    expect(canCreateSprint(manager, true)).toBe(true);
-    expect(canCreateSprint(manager, false)).toBe(false);
-    expect(canCreateSprint(member, true)).toBe(false);
-    expect(canCreateSprint(member, false)).toBe(false);
+  it('requires manager role (YouTrack enforces the real board permission separately)', () => {
+    expect(canCreateSprint(manager)).toBe(true);
+    expect(canCreateSprint(member)).toBe(false);
   });
 
   it('canEditSprintDetails aliases canCreateSprint', () => {

@@ -17,7 +17,7 @@ import { EmptyState } from '../components/EmptyState';
 import { ConflictBanner } from '../components/ConflictBanner';
 
 export interface SettingsFormProps {
-  client?: ApiClient;
+  client: ApiClient;
   /**
    * When provided, the form renders as an embedded panel inside the planner with a
    * "Back to planner" control that invokes this callback (the planner reloads on return).
@@ -28,7 +28,7 @@ export interface SettingsFormProps {
 
 function defaultConfig(): ProjectConfig {
   return {
-    version: 1,
+    version: 2,
     boardId: '',
     originalEffortField: 'Original Effort',
     currentEffortField: 'Current Effort',
@@ -130,8 +130,7 @@ interface FieldOption {
 }
 
 /** §7 project settings form for the Sprint Capacity Planner. */
-export function SettingsForm({ client: injected, onClose }: SettingsFormProps): React.JSX.Element {
-  const client = useMemo(() => injected ?? new ApiClient(), [injected]);
+export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.Element {
 
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -159,11 +158,12 @@ export function SettingsForm({ client: injected, onClose }: SettingsFormProps): 
     [problems],
   );
 
+  // Participants are keyed by LOGIN (the identity shared by widget, backend and REST).
   const rememberNames = useCallback((users: readonly UserSummary[]): void => {
     if (users.length === 0) return;
     setNamesById((prev) => {
       const next = { ...prev };
-      for (const u of users) next[u.id] = u.name || u.login || u.id;
+      for (const u of users) next[u.login] = u.name || u.login;
       return next;
     });
   }, []);
@@ -240,10 +240,10 @@ export function SettingsForm({ client: injected, onClose }: SettingsFormProps): 
       setSaved(false);
       rememberNames([user]);
       setConfig((prev) => {
-        if (prev.participants.some((p) => p.userId === user.id)) return prev;
+        if (prev.participants.some((p) => p.userId === user.login)) return prev;
         return {
           ...prev,
-          participants: [...prev.participants, { userId: user.id, enabled: true, allocation: 1 }],
+          participants: [...prev.participants, { userId: user.login, enabled: true, allocation: 1 }],
         };
       });
     },
@@ -333,8 +333,8 @@ export function SettingsForm({ client: injected, onClose }: SettingsFormProps): 
   // Participant picker: users not already on the team.
   const participantIds = new Set(config.participants.map((p) => p.userId));
   const addOptions = userOptions
-    .filter((u) => !participantIds.has(u.id))
-    .map((u) => ({ key: u.id, label: `${u.name || u.login} (${u.login})`, model: u }));
+    .filter((u) => !participantIds.has(u.login))
+    .map((u) => ({ key: u.login, label: `${u.name || u.login} (${u.login})`, model: u }));
 
   return (
     <div style={{ padding: 'calc(var(--ring-unit) * 2)', font: 'var(--ring-font)', maxWidth: 880 }}>

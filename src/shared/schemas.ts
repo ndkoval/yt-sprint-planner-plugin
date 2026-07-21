@@ -9,23 +9,26 @@ import { z } from 'zod';
 import type {
   CapacityDocument,
   CapacityRow,
-  CompletionCalculation,
+  ConfigDocument,
   FocusFactorOverride,
-  IssueSnapshot,
   Participant,
   ProjectConfig,
+  SprintDataDocument,
+  SprintEntry,
 } from './types.js';
 
-/** Stable user id like "1-123". */
-export const userIdSchema = z.string().regex(/^\d+-\d+$/, 'expected a YouTrack id like "1-123"');
+/** User login (non-empty). */
+export const userIdSchema = z.string().min(1, 'a user login is required');
 
 /** Non-negative integer minutes. */
 const minutes = z.number().int().min(0);
 
+/** yyyy-mm-dd. */
+export const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected yyyy-mm-dd');
+
 export const capacityRowSchema = z
   .object({
     userId: userIdSchema,
-    loginSnapshot: z.string(),
     displayNameSnapshot: z.string(),
     defaultMinutes: minutes,
     availableMinutes: minutes,
@@ -38,35 +41,9 @@ export const capacityRowSchema = z
 
 export const capacityDocumentSchema = z
   .object({
-    version: z.literal(1),
+    version: z.literal(2),
     createdFromConfigVersion: z.number().int().min(0),
     rows: z.record(userIdSchema, capacityRowSchema),
-  })
-  .strict();
-
-export const completionCalculationSchema = z
-  .object({
-    version: z.literal(1),
-    calculatedAt: z.number().int(),
-    sprintStart: z.number().int(),
-    sprintFinish: z.number().int(),
-    rawCapacityMinutes: minutes,
-    originalEffortMinutes: minutes,
-    completedOriginalEffortMinutes: minutes,
-    observedFocusFactor: z.number().min(0).nullable(),
-    calculationRevision: z.number().int().min(0),
-  })
-  .strict();
-
-export const issueSnapshotSchema = z
-  .object({
-    version: z.literal(1),
-    managedSprintIds: z.array(z.string()),
-    originalEffortMinutes: minutes,
-    currentEffortMinutes: minutes,
-    resolved: z.boolean(),
-    resolvedAt: z.number().int().nullable(),
-    updatedAt: z.number().int(),
   })
   .strict();
 
@@ -93,7 +70,7 @@ export const participantSchema = z
 
 export const projectConfigSchema = z
   .object({
-    version: z.literal(1),
+    version: z.literal(2),
     boardId: z.string().min(1),
     originalEffortField: z.string().min(1),
     currentEffortField: z.string().min(1),
@@ -109,6 +86,46 @@ export const projectConfigSchema = z
   })
   .strict();
 
+export const focusFactorSourceSchema = z.enum([
+  'bootstrap',
+  'calculated',
+  'manual',
+  'carried-forward',
+]);
+
+export const configDocumentSchema = z
+  .object({
+    version: z.literal(2),
+    revision: z.number().int().min(0),
+    config: projectConfigSchema,
+  })
+  .strict();
+
+export const sprintEntrySchema = z
+  .object({
+    sequence: z.number().int().min(1),
+    name: z.string(),
+    start: isoDateSchema,
+    finish: isoDateSchema,
+    capacityRevision: z.number().int().min(0),
+    capacity: capacityDocumentSchema,
+    focusFactor: z.number().min(0).max(1),
+    focusFactorSource: focusFactorSourceSchema,
+    focusFactorOverride: focusFactorOverrideSchema.nullable(),
+    excludedFromCalibration: z.boolean(),
+    calibrationSkipReason: z.string().nullable(),
+    createdAt: z.number().int(),
+    updatedAt: z.number().int(),
+  })
+  .strict();
+
+export const sprintDataDocumentSchema = z
+  .object({
+    version: z.literal(2),
+    sprints: z.record(z.string(), sprintEntrySchema),
+  })
+  .strict();
+
 // Compile-time guarantee that each schema is assignable TO its hand-written type.
 // `AssignableTo` normalises `prop?: T | undefined` (how zod infers optionals) against
 // `prop?: T` (our types) so `exactOptionalPropertyTypes` doesn't create false drift,
@@ -121,12 +138,13 @@ type AssignableTo<Schema, Target> =
 export const _typeChecks: [
   AssignableTo<z.infer<typeof capacityRowSchema>, CapacityRow>,
   AssignableTo<z.infer<typeof capacityDocumentSchema>, CapacityDocument>,
-  AssignableTo<z.infer<typeof completionCalculationSchema>, CompletionCalculation>,
-  AssignableTo<z.infer<typeof issueSnapshotSchema>, IssueSnapshot>,
   AssignableTo<z.infer<typeof focusFactorOverrideSchema>, FocusFactorOverride>,
   AssignableTo<z.infer<typeof participantSchema>, Participant>,
   // Config's scalar fields are checked here; its nested `participants` elements are
   // covered by the participant check above (nested-array optionals defeat the
   // top-level normaliser, so we compare the config with participants omitted).
   AssignableTo<Omit<z.infer<typeof projectConfigSchema>, 'participants'>, Omit<ProjectConfig, 'participants'>>,
-] = [true, true, true, true, true, true, true];
+  AssignableTo<Omit<z.infer<typeof configDocumentSchema>, 'config'>, Omit<ConfigDocument, 'config'>>,
+  AssignableTo<Omit<z.infer<typeof sprintEntrySchema>, 'capacity'>, Omit<SprintEntry, 'capacity'>>,
+  AssignableTo<Omit<z.infer<typeof sprintDataDocumentSchema>, 'sprints'>, Omit<SprintDataDocument, 'sprints'>>,
+] = [true, true, true, true, true, true, true, true];

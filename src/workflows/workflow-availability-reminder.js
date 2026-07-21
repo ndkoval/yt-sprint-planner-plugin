@@ -1,137 +1,115 @@
 /**
  * workflow-availability-reminder.js — Issue.onSchedule rule (availability nudges).
  *
- * TRIGGER: Cron (daily by default). For each upcoming managed Sprint whose start is
- * within the reminder lead window (app setting `reminderLeadDays`, default 3 days),
- * notify every participant who has not set their availability yet (still the default),
- * asking them to review it.
+ * Once a day, for each upcoming managed Sprint whose start is within the reminder
+ * lead window (app setting `reminderLeadDays`, default 3 days), notify every
+ * participant who has not confirmed their availability yet (their capacity row is
+ * still the untouched default). Reminders are informational and never block.
  *
- * WHY on an ISSUE schedule: onSchedule iterates ISSUES, so we reach Sprints through
- * their member issues and de-duplicate Sprints per run.
+ * This is the app's only workflow rule. Sprint metrics are computed live by the
+ * backend/widget on every read, so no on-change bookkeeping rules are needed.
  *
- * ALGORITHM (per matching issue):
- *   1. For each managed Sprint the issue belongs to that has NOT been processed this
- *      run and starts within [now, now + leadDays]:
- *        a. Parse its capacity document (scpCapacityJson).
- *        b. For each row with availableWasCustomized === false, notify the user UNLESS they were
- *           already reminded within the last 24h (per-row `scpLastReminderAt`, an
- *           unknown field preserved inside the capacity document).
- *        c. Stamp scpLastReminderAt on reminded rows and persist the capacity doc.
- *
- * IDEMPOTENCE / RATE LIMIT: A person is never reminded more than once per 24h,
- * tracked by scpLastReminderAt inside their capacity row. Reminders are purely
- * INFORMATIONAL and must NEVER block anything.
- *
- * FAILURE POLICY: Swallow all errors (log only).
+ * SHAPE (follows the production-workflow conventions):
+ *   - Daily cron at a staggered off-peak minute; scheduled rules never run more often.
+ *   - muteUpdateNotifications: the rule's own writes must not spam watchers.
+ *   - Self-limiting: the FIRST matching issue of a project performs the whole
+ *     project's reminder pass and stamps `scpReminderStateJson`; every other issue
+ *     that day short-circuits on the stamp. All app state is project-scoped
+ *     (issue.project.extensionProperties), so one issue is enough to reach it.
  */
 
 'use strict';
 
 /* eslint-disable @typescript-eslint/no-require-imports -- YouTrack workflows run in a CommonJS runtime and must use require(). */
 
-var entities = require('@jetbrains/youtrack-scripting-api/entities');
-var common = require('./workflow-common');
+const entities = require('@jetbrains/youtrack-scripting-api/entities');
 
-var MS_PER_DAY = 24 * 60 * 60 * 1000;
-var DEFAULT_LEAD_DAYS = 3;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const DEFAULT_LEAD_DAYS = 3;
 
-// SPIKE: verify on real YouTrack — module-level dedup state across a single run.
-var remindedSprintsThisRun = {};
+/** yyyy-mm-dd for a UTC timestamp. */
+const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
 
-/**
- * True when the Sprint starts within the lead window [now, now + leadDays].
- */
-function startsWithinLeadWindow(sprint, nowMs, leadDays) {
-  var dates = common.getSprintDates(sprint);
-  if (typeof dates.startMs !== 'number') return false;
-  var windowEnd = nowMs + leadDays * MS_PER_DAY;
-  return dates.startMs >= nowMs && dates.startMs <= windowEnd;
-}
+/** UTC-midnight ms for a yyyy-mm-dd date. */
+const dayToMs = (iso) =>
+  Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)));
 
-/**
- * Send reminders for one upcoming Sprint.
- * @param {object} sprint
- * @param {number} nowMs
- */
-function remindForSprint(sprint, nowMs) {
-  var doc = common.parseCapacityDocument(common.readExtProp(sprint, 'scpCapacityJson'));
-  if (!doc || !doc.rows || typeof doc.rows !== 'object') return;
+const parseJson = (raw) => {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
 
-  var sprintName = common.readExtProp(sprint, 'name') || 'the upcoming sprint';
-  var changed = false;
+/** Send reminders for every upcoming Sprint of one project. Returns quietly on error. */
+const remindForProject = (project, leadDays, nowMs) => {
+  const props = project.extensionProperties;
+  const data = parseJson(props.scpSprintDataJson);
+  if (!data || data.version !== 2 || !data.sprints) return;
 
-  var userIds = Object.keys(doc.rows);
-  for (var i = 0; i < userIds.length; i++) {
-    var row = doc.rows[userIds[i]];
-    // Nudge only people who have not set their availability yet (still the default).
-    if (!row || row.availableWasCustomized === true) continue;
+  const state = parseJson(props.scpReminderStateJson) || { version: 1, remindedOn: {} };
+  const today = isoDay(nowMs);
+  let stateChanged = false;
 
-    // Rate limit: skip if reminded within the last 24h.
-    var last = Number(row.scpLastReminderAt);
-    if (isFinite(last) && last > 0 && nowMs - last < MS_PER_DAY) continue;
+  Object.keys(data.sprints).forEach((sprintId) => {
+    const entry = data.sprints[sprintId];
+    if (!entry || typeof entry.start !== 'string') return;
+    const startMs = dayToMs(entry.start);
+    const upcoming = startMs >= nowMs && startMs <= nowMs + leadDays * MS_PER_DAY;
+    if (!upcoming || state.remindedOn[sprintId] === today) return;
 
-    var user = common.findUserById(row.userId || userIds[i]);
-    var subject = 'Set your availability for ' + sprintName;
-    var body =
-      'You have not set your availability for "' +
-      sprintName +
-      '" yet — it is still the default. Please review and adjust it if needed. ' +
-      'This is an informational reminder.';
+    const rows = (entry.capacity && entry.capacity.rows) || {};
+    Object.keys(rows).forEach((login) => {
+      const row = rows[login];
+      if (!row || row.availableWasCustomized === true) return;
+      const user = entities.User.findByLogin(login);
+      if (!user) return;
+      user.notify(
+        'Set your availability for ' + (entry.name || 'the upcoming sprint'),
+        'You have not set your availability for "' +
+          (entry.name || sprintId) +
+          '" yet — it is still the default. Please review and adjust it if needed. ' +
+          'This is an informational reminder.',
+      );
+    });
 
-    var sent = common.notifyUser(user, subject, body);
-    // Record the attempt regardless of delivery success so we honour the 24h limit
-    // even if the notification channel is temporarily unavailable.
-    row.scpLastReminderAt = nowMs;
-    changed = true;
-    if (!sent) {
-      console.warn('scp: reminder could not be delivered to ' + (row.userId || userIds[i]));
+    state.remindedOn[sprintId] = today;
+    stateChanged = true;
+  });
+
+  // Drop stamps for sprints that no longer exist or have started.
+  Object.keys(state.remindedOn).forEach((sprintId) => {
+    const entry = data.sprints[sprintId];
+    if (!entry || dayToMs(entry.start) < nowMs) {
+      delete state.remindedOn[sprintId];
+      stateChanged = true;
     }
-  }
+  });
 
-  if (changed) {
-    // Persist the reminder timestamps, preserving unknown fields.
-    common.writeExtProp(sprint, 'scpCapacityJson', common.serializeCapacityDocument(doc));
-  }
-}
-
-/**
- * Process one issue's upcoming managed Sprints.
- * @param {object} issue
- */
-function remindForIssue(issue) {
-  var nowMs = Date.now();
-  var leadDays = common.getAppSettingNumber('reminderLeadDays', DEFAULT_LEAD_DAYS);
-  if (!(leadDays > 0)) leadDays = DEFAULT_LEAD_DAYS;
-
-  var sprints = common.getManagedSprints(issue);
-  for (var i = 0; i < sprints.length; i++) {
-    var sprint = sprints[i];
-    var id = common.sprintId(sprint);
-    if (!id || remindedSprintsThisRun[id]) continue;
-    if (!startsWithinLeadWindow(sprint, nowMs, leadDays)) continue;
-
-    try {
-      remindForSprint(sprint, nowMs);
-      remindedSprintsThisRun[id] = true;
-    } catch (e) {
-      console.error('scp: reminder failed for sprint ' + id + ': ' + common.sanitizeError(e));
-    }
-  }
-}
+  if (stateChanged) props.scpReminderStateJson = JSON.stringify(state);
+};
 
 exports.rule = entities.Issue.onSchedule({
-  title: 'SCP: remind participants to confirm Sprint availability',
-  // Default: daily at 08:00. Quartz-style 6-field cron.
-  cron: '0 0 8 * * ?',
-  // SPIKE: verify on real YouTrack — search selecting issues on a board so we can
-  // reach upcoming managed Sprints. Narrow for large instances.
-  search: 'has: Board',
-  action: function (ctx) {
+  title: 'Sprint Capacity Planner: remind participants to confirm availability',
+  // Daily at a staggered off-peak minute (Quartz 6-field cron).
+  cron: '0 47 7 * * ?',
+  // The rule only runs in projects the app is attached to; the per-day stamp in
+  // scpReminderStateJson makes the pass self-limiting (one issue does the work,
+  // the rest short-circuit), so no issue-level guard is needed.
+  search: '#Unresolved',
+  muteUpdateNotifications: true,
+  action: (ctx) => {
     try {
-      remindForIssue(ctx.issue);
+      const nowMs = Date.now();
+      const configured = Number(ctx.settings && ctx.settings.reminderLeadDays);
+      const leadDays = configured > 0 ? configured : DEFAULT_LEAD_DAYS;
+      remindForProject(ctx.issue.project, leadDays, nowMs);
     } catch (e) {
-      // Reminders never block.
-      console.error('scp: reminder action failed: ' + common.sanitizeError(e));
+      // Reminders never block or escalate.
+      console.error('scp: availability reminder failed: ' + String(e && e.message ? e.message : e));
     }
   },
+  requirements: {},
 });

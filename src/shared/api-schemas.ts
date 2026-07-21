@@ -1,10 +1,15 @@
 /**
- * Runtime validation schemas for mutating API request bodies (§18: "All payloads
- * pass runtime schema validation"). The backend validates every request against
- * these before touching any state.
+ * Runtime validation schemas for backend request bodies. The backend validates every
+ * mutating request against these before touching any state.
  */
 import { z } from 'zod';
-import { projectConfigSchema } from './schemas.js';
+import {
+  focusFactorSourceSchema,
+  isoDateSchema,
+  projectConfigSchema,
+  sprintEntrySchema,
+  userIdSchema,
+} from './schemas.js';
 
 const minutes = z.number().int().min(0);
 
@@ -15,8 +20,25 @@ export const putConfigRequestSchema = z
   })
   .strict();
 
-export const patchCapacityRequestSchema = z
+export const registerSprintRequestSchema = z
   .object({
+    sprint: z
+      .object({
+        id: z.string().min(1),
+        name: z.string().min(1),
+        start: isoDateSchema,
+        finish: isoDateSchema,
+      })
+      .strict(),
+    focusFactor: z.number().min(0).max(1).optional(),
+    focusFactorSource: focusFactorSourceSchema.optional(),
+  })
+  .strict();
+
+export const capacityWriteRequestSchema = z
+  .object({
+    sprintId: z.string().min(1),
+    target: z.union([z.literal('me'), z.object({ userId: userIdSchema }).strict()]),
     expectedRevision: z.number().int().min(0),
     availableMinutes: minutes.optional(),
     note: z.string().max(2000).optional(),
@@ -26,46 +48,43 @@ export const patchCapacityRequestSchema = z
     message: 'at least one of availableMinutes, note is required',
   });
 
-/** Body for capacity actions that carry only an optimistic-concurrency revision. */
-export const capacityRevisionRequestSchema = z
-  .object({ expectedRevision: z.number().int().min(0) })
-  .strict();
-
-export const createNextSprintRequestSchema = z
+export const capacityResetRequestSchema = z
   .object({
-    goal: z.string().max(4000).optional(),
-    moveUnresolvedIssues: z.boolean(),
+    sprintId: z.string().min(1),
+    userId: userIdSchema,
+    expectedRevision: z.number().int().min(0),
   })
   .strict();
-
-export const patchSprintDetailsRequestSchema = z
-  .object({
-    name: z.string().min(1).max(500).optional(),
-    goal: z.string().max(4000).optional(),
-    start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    finish: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  })
-  .strict()
-  .refine((b) => Object.keys(b).length > 0, { message: 'at least one field is required' });
 
 export const overrideFocusFactorRequestSchema = z
   .object({
+    sprintId: z.string().min(1),
     reason: z.string().min(1).max(2000),
     newValue: z.number().min(0).max(1),
   })
   .strict();
 
-export const excludeCalibrationRequestSchema = z
+export const setCalibrationRequestSchema = z
   .object({
-    reason: z.string().min(1).max(2000),
+    sprintId: z.string().min(1),
+    excluded: z.boolean(),
+    reason: z.string().max(2000).optional(),
+  })
+  .strict()
+  .refine((b) => !b.excluded || (b.reason ?? '').trim().length > 0, {
+    message: 'a reason is required when excluding a Sprint from calibration',
+  });
+
+export const importRequestSchema = z
+  .object({
+    bundle: z
+      .object({
+        exportedAt: z.number().int(),
+        configRevision: z.number().int().min(0),
+        config: projectConfigSchema.nullable(),
+        sprints: z.record(z.string(), sprintEntrySchema),
+      })
+      .strict(),
+    dryRun: z.boolean(),
   })
   .strict();
-
-export const planIssueRequestSchema = z
-  .object({
-    inSprint: z.boolean(),
-    // null unassigns; a non-empty id assigns.
-    assigneeId: z.string().min(1).nullable(),
-  })
-  .strict();
-

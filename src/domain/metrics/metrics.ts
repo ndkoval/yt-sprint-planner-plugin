@@ -1,24 +1,13 @@
 /**
  * Computes a Sprint's full metric set from authoritative inputs: the capacity
- * document, the current issue set, the Sprint dates and the Focus Factor. This is
- * the single place that maps the pure domain calculations onto a Sprint record.
+ * document, the current issue set, the Sprint dates and the Focus Factor. Metrics
+ * are always computed live on read — there is no cached copy to go stale.
  */
-import {
-  aggregateEffort,
-  endOfDayUtcMs,
-  isoToUtcMs,
-  observedFocusFactor,
-  plannedCapacityMinutes,
-  rawCapacityMinutes,
-  type EffortIssue,
-} from '../../domain/index.js';
 import type { CapacityDocument, CompletionCalculation } from '../../shared/types.js';
-import type { YtIssue } from '../repositories/youtrack-client.js';
-
-export interface AssigneeEffort {
-  originalEffortMinutes: number;
-  currentEffortMinutes: number;
-}
+import { plannedCapacityMinutes, rawCapacityMinutes } from '../capacity/capacity.js';
+import { endOfDayUtcMs, isoToUtcMs } from '../dates/dates.js';
+import { aggregateEffort, type AssigneeEffort, type EffortIssue } from '../effort/effort.js';
+import { observedFocusFactor } from '../focus-factor/focus-factor.js';
 
 export interface ComputedMetrics {
   rawCapacityMinutes: number;
@@ -28,7 +17,7 @@ export interface ComputedMetrics {
   completedOriginalEffortMinutes: number;
   observedFocusFactor: number | null;
   issuesMissingOriginalEffort: string[];
-  /** Per-assignee effort (keyed by user id) for per-person planning load. */
+  /** Per-assignee effort (keyed by user login) for per-person planning load. */
   assignedEffort: Record<string, AssigneeEffort>;
   /** Effort on issues left unassigned. */
   unassignedEffort: AssigneeEffort;
@@ -36,30 +25,18 @@ export interface ComputedMetrics {
   unresolvedIssueCount: number;
 }
 
-/** Map a transport issue to the domain effort issue. */
-function toEffortIssue(issue: YtIssue): EffortIssue {
-  return {
-    id: issue.id,
-    originalEffortMinutes: issue.originalEffortMinutes,
-    currentEffortMinutes: issue.currentEffortMinutes,
-    resolved: issue.resolved,
-    resolvedAt: issue.resolvedAt,
-    assigneeId: issue.assigneeId,
-  };
-}
-
 /**
  * Compute every metric for a Sprint.
  *
- * @param capacity   The Sprint's capacity document (null ⇒ zero capacity).
- * @param issues     Issues currently in the native Sprint.
- * @param start      yyyy-mm-dd Sprint start.
- * @param finish     yyyy-mm-dd Sprint finish.
+ * @param capacity    The Sprint's capacity document (null ⇒ zero capacity).
+ * @param issues      Issues currently in the native Sprint.
+ * @param start       yyyy-mm-dd Sprint start.
+ * @param finish      yyyy-mm-dd Sprint finish.
  * @param focusFactor The Sprint's current Focus Factor.
  */
 export function computeMetrics(
   capacity: CapacityDocument | null,
-  issues: readonly YtIssue[],
+  issues: readonly EffortIssue[],
   start: string,
   finish: string,
   focusFactor: number,
@@ -68,7 +45,7 @@ export function computeMetrics(
   // Inclusive of the whole finish day, so work resolved on the last Sprint day counts.
   const finishMs = endOfDayUtcMs(finish);
   const raw = capacity ? rawCapacityMinutes(capacity) : 0;
-  const effort = aggregateEffort(issues.map(toEffortIssue), startMs, finishMs);
+  const effort = aggregateEffort(issues, startMs, finishMs);
   return {
     rawCapacityMinutes: raw,
     plannedCapacityMinutes: plannedCapacityMinutes(raw, focusFactor),
@@ -83,16 +60,19 @@ export function computeMetrics(
   };
 }
 
-/** Build a completion snapshot for a completed Sprint from computed metrics (§8.4). */
+/** A Sprint is "completed" once the end of its finish day has passed. */
+export function isCompletedSprint(finish: string, nowMs: number): boolean {
+  return nowMs > endOfDayUtcMs(finish);
+}
+
+/** Build the live completion figures for a completed Sprint from computed metrics. */
 export function buildCompletion(
   metrics: ComputedMetrics,
   start: string,
   finish: string,
   calculatedAt: number,
-  calculationRevision: number,
 ): CompletionCalculation {
   return {
-    version: 1,
     calculatedAt,
     sprintStart: isoToUtcMs(start),
     sprintFinish: endOfDayUtcMs(finish),
@@ -100,6 +80,5 @@ export function buildCompletion(
     originalEffortMinutes: metrics.originalEffortMinutes,
     completedOriginalEffortMinutes: metrics.completedOriginalEffortMinutes,
     observedFocusFactor: metrics.observedFocusFactor,
-    calculationRevision,
   };
 }

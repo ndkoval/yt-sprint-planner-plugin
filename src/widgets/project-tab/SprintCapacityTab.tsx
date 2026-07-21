@@ -4,6 +4,12 @@ import Select from '@jetbrains/ring-ui-built/components/select/select';
 import type { SprintSummary, SprintView, PatchCapacityRequest, IssueView } from '../../shared/api';
 import type { ProjectConfig } from '../../shared/types';
 import { daysToMinutes } from '../../shared/units';
+import {
+  firstSprintDates,
+  nextSprintDates,
+  renderSprintName,
+  utcMsToIso,
+} from '../../domain/index';
 import { ApiClient, ApiClientError } from '../api-client';
 import { CapacityTable, type RowDraft } from '../components/CapacityTable';
 import { CapacitySummary } from '../components/CapacitySummary';
@@ -25,45 +31,34 @@ import { SettingsForm } from '../project-settings/SettingsForm';
 import type { CreateNextSprintRequest, OverrideFocusFactorRequest } from '../../shared/api';
 
 export interface SprintCapacityTabProps {
-  client?: ApiClient;
+  client: ApiClient;
 }
 
 interface ConflictInfo {
   retry: () => Promise<void>;
 }
 
-function addDays(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 /**
  * Preview the next Sprint. It is always computed from the LATEST managed Sprint (max
- * sequence), NOT the currently-selected one, because the backend creates the next
- * Sprint after the latest regardless of UI selection. With no managed Sprints yet, it
- * previews the first Sprint starting today (the backend does the same).
+ * sequence), NOT the currently-selected one, because create-next continues after the
+ * latest regardless of UI selection. With no managed Sprints yet, it previews the
+ * first Sprint starting today. Uses the same domain functions as the create flow, so
+ * the preview always matches what will actually be created.
  */
 function computePreview(
   config: ProjectConfig,
   latest: { finish: string; sequence: number } | null,
 ): NextSprintPreview {
-  const start = latest ? addDays(latest.finish, 1) : todayIso();
-  const finish = addDays(start, Math.max(0, config.sprintLengthDays - 1));
-  const nextSequence = (latest?.sequence ?? 0) + 1;
-  // Mirror the backend renderSprintName placeholders exactly ({year}/{sequence}/
-  // {startDate}/{finishDate}) so this preview matches the name the backend will
-  // actually create. See src/domain/sprint/naming.ts.
-  const name = config.nameTemplate
-    .replace(/\{year\}/g, start.slice(0, 4))
-    .replace(/\{sequence\}/g, String(nextSequence))
-    .replace(/\{startDate\}/g, start)
-    .replace(/\{finishDate\}/g, finish);
-  return { name, start, finish };
+  const dates = latest
+    ? nextSprintDates(latest.finish, config.sprintLengthDays)
+    : firstSprintDates(utcMsToIso(Date.now()), config.sprintLengthDays);
+  const name = renderSprintName(config.nameTemplate, {
+    year: Number(dates.start.slice(0, 4)),
+    sequence: (latest?.sequence ?? 0) + 1,
+    startDate: dates.start,
+    finishDate: dates.finish,
+  });
+  return { name, start: dates.start, finish: dates.finish };
 }
 
 function defaultDays(availableMinutes: number, hoursPerDay: number): string {
@@ -87,8 +82,7 @@ const sectionTitleStyle: React.CSSProperties = {
 };
 
 /** §6 main Sprint capacity screen. */
-export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps): React.JSX.Element {
-  const client = useMemo(() => injected ?? new ApiClient(), [injected]);
+export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX.Element {
 
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -267,7 +261,7 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
 
   const rows = useMemo(
     () => (sprint === null ? [] : Object.values(sprint.capacity.rows).sort((a, b) =>
-      (a.displayNameSnapshot || a.loginSnapshot).localeCompare(b.displayNameSnapshot || b.loginSnapshot),
+      (a.displayNameSnapshot || a.userId).localeCompare(b.displayNameSnapshot || b.userId),
     )),
     [sprint],
   );
@@ -560,7 +554,7 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
               backlogIssues={backlog}
               lanes={rows.map((r) => ({
                 userId: r.userId,
-                name: r.displayNameSnapshot || r.loginSnapshot,
+                name: r.displayNameSnapshot || r.userId,
                 availableMinutes: r.availableMinutes,
               }))}
               plannedCapacityMinutes={sprint.plannedCapacityMinutes}
@@ -579,8 +573,8 @@ export function SprintCapacityTab({ client: injected }: SprintCapacityTabProps):
               client={client}
               teammates={rows.map((r) => ({
                 userId: r.userId,
-                login: r.loginSnapshot,
-                name: r.displayNameSnapshot || r.loginSnapshot,
+                login: r.userId,
+                name: r.displayNameSnapshot || r.userId,
               }))}
               hoursPerDay={hoursPerDay}
               onClose={() => setActiveIssue(null)}

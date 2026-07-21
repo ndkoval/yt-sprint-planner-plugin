@@ -15,9 +15,7 @@
  * Workflow file placement: the manifest declares no explicit workflows path, so YouTrack
  * auto-discovers workflow rule modules as TOP-LEVEL package scripts. They must sit at the
  * package root (alongside backend.js), NOT in a dist/workflows/ subfolder (modules in a
- * subfolder are never registered as rules on 2025.3). They stay co-located at the root, so the
- * relative `require('./workflow-common.js')` between them still resolves; no name collision
- * with backend.js (workflow-*.js).
+ * subfolder are never registered as rules on 2025.3).
  */
 import { spawnSync } from 'node:child_process';
 import { mkdir, copyFile, readdir, access } from 'node:fs/promises';

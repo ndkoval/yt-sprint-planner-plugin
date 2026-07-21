@@ -1,14 +1,7 @@
-import React from 'react';
-import { createRoot } from 'react-dom/client';
-import '@jetbrains/ring-ui-built/components/style.css';
-import { SprintCapacityTab } from './SprintCapacityTab';
+/**
+ * PROJECT_SETTINGS entry point: the "Sprint Capacity" tab in project settings —
+ * planning plus manager configuration in one place.
+ */
+import { bootstrapPlannerWidget } from '../bootstrap';
 
-const container = document.getElementById('root');
-if (container === null) {
-  throw new Error('Root container #root not found in the widget host page.');
-}
-createRoot(container).render(
-  <React.StrictMode>
-    <SprintCapacityTab />
-  </React.StrictMode>,
-);
+bootstrapPlannerWidget();

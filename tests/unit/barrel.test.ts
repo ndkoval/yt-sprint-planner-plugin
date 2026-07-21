@@ -9,6 +9,8 @@ describe('domain barrel', () => {
     expect(typeof domain.nextFocusFactor).toBe('function');
     expect(typeof domain.renderSprintName).toBe('function');
     expect(typeof domain.canCreateSprint).toBe('function');
+    expect(typeof domain.computeMetrics).toBe('function');
+    expect(typeof domain.seedCapacityDocument).toBe('function');
     expect(typeof domain.migrate).toBe('function');
   });
 });

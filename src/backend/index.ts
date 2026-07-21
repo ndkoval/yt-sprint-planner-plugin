@@ -1,173 +1,183 @@
 /**
- * YouTrack App backend entry point (manifest `backend.entryPoint`).
+ * YouTrack App backend entry point (bundled to `backend.js` at the package root).
  *
- * This is a thin adapter: it constructs the {@link Router} with the real HTTP client
- * and maps YouTrack's app HTTP handler `ctx` onto our transport-agnostic
- * {@link HttpRequest}/{@link HttpResponse}. All logic lives in {@link ./app.ts} and the
- * services so it stays unit/contract testable.
+ * Endpoints are GLOBAL-scoped (they work identically from the project settings tab,
+ * the issue action widget and the dashboard widget) and take the project KEY via the
+ * `project` query parameter; the handler resolves the Project entity in-process with
+ * `entities.Project.findByKey` and reads/writes its `scp*` extension properties. The
+ * caller is `ctx.currentUser` — the real authenticated user — so authorization is
+ * always server-side. No tokens, no REST-to-self.
  *
- * YouTrack app HTTP handlers (verified against the 2025.3 Apps SDK) only support
- * GET/POST/PUT/DELETE with fixed, non-parameterised endpoint paths — but our API has many
- * parameterised routes (`/sprints/{id}/capacity/me`) and uses PATCH. So instead of one
- * endpoint per route, the widget POSTs an envelope `{ method, path, body }` to a single
- * `api` endpoint and we dispatch it through the router. The real HTTP status is returned
- * INSIDE the response envelope (`{ status, body }`) because the host's `fetchApp` transport
- * does not surface HTTP status codes. See {@link ../widgets/api-client.ts}.
+ * Responses always travel in a 200 envelope `{ok, data|error}` because the host's
+ * `fetchApp` transport does not surface HTTP error bodies reliably (verified on 2025.3).
  */
-import { createApp } from './app.js';
-import type { HttpMethod, HttpRequest } from './http/router.js';
 import {
-  YouTrackHttpClient,
-  configureRuntimeConnection,
-  setRuntimeStore,
-  getRuntimeStore,
-} from './repositories/youtrack-http-client.js';
+  capacityResetRequestSchema,
+  capacityWriteRequestSchema,
+  importRequestSchema,
+  overrideFocusFactorRequestSchema,
+  putConfigRequestSchema,
+  registerSprintRequestSchema,
+  setCalibrationRequestSchema,
+} from '../shared/api-schemas.js';
+import type { BackendEnvelope } from '../shared/api.js';
+import { AppError, notFound, forbidden, toApiError } from './errors.js';
+import type { BackendEnv, BackendProject, BackendUser } from './env.js';
+import * as handlers from './handlers.js';
+import { newCorrelationId } from './ids.js';
 
 /** The `ctx.request` YouTrack passes to an endpoint's `handle(ctx)`. */
 interface YtRequest {
-  method?: string;
-  path?: string;
-  fullPath?: string;
-  body?: string;
   json(): unknown;
   getParameter(name: string): string | null;
 }
 
-/** The `ctx.response` builder. Status is the `code` property (there is no status()). */
+/** The `ctx.response` builder. Status is the `code` property. */
 interface YtResponse {
   code: number;
   json(value: unknown): void;
 }
 
-interface YtGlobalStorage {
-  extensionProperties: Record<string, unknown>;
-}
-
 interface YtContext {
   request: YtRequest;
   response: YtResponse;
-  settings?: Record<string, unknown>;
-  globalStorage?: YtGlobalStorage;
-  currentUser?: { login?: string; isSystem?: boolean } | null;
+  /** The real authenticated caller (alias of entities.User.current). */
+  currentUser?: {
+    login?: string;
+    fullName?: string;
+    isInGroup?(group: string): boolean;
+  } | null;
 }
 
-/** The envelope the widget sends: the real method + app-relative path (may carry ?query). */
-interface RequestEnvelope {
-  method?: string;
-  path?: string;
-  body?: unknown;
+// ---------------------------------------------------------------------------
+// Real environment over the in-process scripting API.
+// ---------------------------------------------------------------------------
+
+/* eslint-disable @typescript-eslint/no-explicit-any -- runtime-provided module */
+let entitiesModule: any = null;
+function entities(): any {
+  if (entitiesModule === null) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- CommonJS runtime
+    entitiesModule = require('@jetbrains/youtrack-scripting-api/entities');
+  }
+  return entitiesModule;
 }
 
-function parseQuery(queryString: string): Record<string, string> {
-  const query: Record<string, string> = {};
-  for (const pair of queryString.split('&')) {
-    if (pair.length === 0) continue;
-    const idx = pair.indexOf('=');
-    const key = idx >= 0 ? pair.slice(0, idx) : pair;
-    const value = idx >= 0 ? pair.slice(idx + 1) : '';
-    query[decodeURIComponent(key)] = decodeURIComponent(value);
-  }
-  return query;
-}
-
-// Build the app once per backend instance.
-const app = createApp({ client: new YouTrackHttpClient() });
-
-/** Dispatch one tunnelled widget request through the router. */
-async function handleApi(ctx: YtContext): Promise<void> {
-  let envelope: RequestEnvelope = {};
-  try {
-    envelope = (ctx.request.json() as RequestEnvelope) ?? {};
-  } catch {
-    envelope = {};
-  }
-
-  // The backend runtime has no `fetch` and no automatic same-instance REST auth, so it
-  // authenticates as the app with a token. The token is stored once in the app's global
-  // storage via the `/__configure` control path (an admin sets it at provisioning time);
-  // app settings are used as a fallback. KNOWN LIMITATION (security): the provisioned token is
-  // admin-scoped and therefore over-privileged relative to the manifest's scopes; the token-free
-  // long-term path is the Backend JS (entities) API. Mitigated by the write-once bootstrap below.
-  // See youtrack-http-client.ts. Tracked follow-up.
-  const store = ctx.globalStorage?.extensionProperties ?? {};
-  if (envelope.path === '/__configure') {
-    // Provisioning-only control path that stores the backend's app token in app storage.
-    // Hardened against injection:
-    //   - WRITE-ONCE: it only accepts a token when none is stored yet (first-run bootstrap
-    //     during provisioning). Once set it is locked — reconfiguring requires reinstalling
-    //     the app (which clears AppGlobalStorage). This removes the reconfigure attack surface.
-    //   - The base URL is NEVER caller-supplied (that would be an SSRF / token-exfiltration
-    //     vector); the backend always talks to its own instance via the runtime default
-    //     (see runtimeBaseUrl / SCP_YT_BASE_URL in youtrack-http-client.ts).
-    // KNOWN LIMITATION: this token bridge is a provisioning stopgap; the proper design is the
-    // Backend JS (entities) API, which needs no stored token at all — tracked as follow-up.
-    const alreadySet = typeof store.scpYoutrackToken === 'string' && store.scpYoutrackToken.length > 0;
-    if (alreadySet) {
-      ctx.response.code = 200;
-      ctx.response.json({
-        status: 409,
-        body: { code: 'ALREADY_CONFIGURED', message: 'The app connection is already configured; reinstall to reset.' },
-      });
-      return;
-    }
-    const cfg = (envelope.body ?? {}) as { token?: unknown };
-    if (typeof cfg.token === 'string' && cfg.token.length > 0) store.scpYoutrackToken = cfg.token;
-    ctx.response.code = 200;
-    ctx.response.json({ status: 200, body: { configured: true } });
-    return;
-  }
-  const settings = ctx.settings ?? {};
-  const token =
-    (typeof store.scpYoutrackToken === 'string' ? store.scpYoutrackToken : null) ??
-    (typeof settings.youtrackToken === 'string' ? settings.youtrackToken : null);
-  // Base URL is the app's own instance — taken from the runtime (SCP_YT_BASE_URL / default),
-  // never from the request, so a caller can't repoint the backend's REST calls.
-  configureRuntimeConnection(null, token);
-
-  // Load the app's extension-property state (one JSON blob in AppGlobalStorage) into the
-  // client before dispatch, then write it back after so mutations persist.
-  let state: Record<string, Record<string, string | number | boolean | null>> = {};
-  if (typeof store.scpStateJson === 'string' && store.scpStateJson.length > 0) {
-    try {
-      state = JSON.parse(store.scpStateJson);
-    } catch {
-      state = {};
-    }
-  }
-  setRuntimeStore(state);
-
-  const rawPath = typeof envelope.path === 'string' && envelope.path.length > 0 ? envelope.path : '/';
-  const qIndex = rawPath.indexOf('?');
-  const pathOnly = qIndex >= 0 ? rawPath.slice(0, qIndex) : rawPath;
-  const query = qIndex >= 0 ? parseQuery(rawPath.slice(qIndex + 1)) : {};
-  const request: Omit<HttpRequest, 'params'> = {
-    method: (envelope.method ?? 'GET').toUpperCase() as HttpMethod,
-    path: pathOnly.length > 0 ? pathOnly : '/',
-    query,
-    body: envelope.body,
+function realEnv(): BackendEnv {
+  return {
+    findProjectByKey(key: string): BackendProject | null {
+      const project = entities().Project.findByKey(key);
+      if (!project) return null;
+      return {
+        key,
+        leaderLogin: typeof project.leader?.login === 'string' ? project.leader.login : null,
+        getProperty(name: string): string | null {
+          const value = project.extensionProperties[name];
+          return typeof value === 'string' && value.length > 0 ? value : null;
+        },
+        setProperty(name: string, value: string | null): void {
+          project.extensionProperties[name] = value;
+        },
+      };
+    },
+    findUserNameByLogin(login: string): string | null {
+      const user = entities().User.findByLogin(login);
+      if (!user) return null;
+      return typeof user.fullName === 'string' && user.fullName.length > 0
+        ? user.fullName
+        : login;
+    },
+    now: () => Date.now(),
   };
-  const result = await app.handle(request);
-  // Persist any extension-property writes back to AppGlobalStorage.
-  store.scpStateJson = JSON.stringify(getRuntimeStore());
-  // Transport is always 200; the real status travels in the envelope.
-  ctx.response.code = 200;
-  ctx.response.json({ status: result.status, body: result.body });
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+function callerOf(ctx: YtContext): BackendUser {
+  const u = ctx.currentUser;
+  if (!u || typeof u.login !== 'string' || u.login.length === 0) {
+    throw forbidden('No authenticated user.');
+  }
+  const login = u.login;
+  return {
+    login,
+    name: typeof u.fullName === 'string' && u.fullName.length > 0 ? u.fullName : login,
+    isInGroup: (group: string) => u.isInGroup?.(group) === true,
+  };
 }
 
-/**
- * The app's HTTP handler. Exposed to YouTrack as `exports.httpHandler`; the bundle is a
- * root-level `backend.js`, so the endpoint is reachable at
- * `/api/extensionEndpoints/sprint-capacity-planner/backend/api`.
- */
+// ---------------------------------------------------------------------------
+// Endpoint wiring
+// ---------------------------------------------------------------------------
+
+type Handle = (rctx: handlers.RequestContext, body: unknown, correlationId: string) => unknown;
+
+function endpoint(method: 'GET' | 'POST', path: string, handle: Handle) {
+  return {
+    method,
+    path,
+    scope: 'global' as const,
+    handle: (ctx: YtContext): void => {
+      const correlationId = newCorrelationId(Date.now());
+      try {
+        const key = ctx.request.getParameter('project');
+        if (!key) {
+          throw new AppError('VALIDATION_FAILED', 'The project query parameter is required.');
+        }
+        const env = realEnv();
+        const project = env.findProjectByKey(key);
+        if (!project) throw notFound(`Project ${key}`);
+        let body: unknown = null;
+        if (method === 'POST') {
+          try {
+            body = ctx.request.json();
+          } catch {
+            body = null;
+          }
+        }
+        const data = handle({ env, user: callerOf(ctx), project }, body, correlationId);
+        const envelope: BackendEnvelope<unknown> = { ok: true, data };
+        ctx.response.json(envelope);
+      } catch (err) {
+        const error = toApiError(err, correlationId);
+        console.error(
+          `scp backend [${correlationId}] ${error.code}: ` +
+            (err instanceof Error ? err.message : String(err)),
+        );
+        const envelope: BackendEnvelope<never> = { ok: false, error };
+        ctx.response.json(envelope);
+      }
+    },
+  };
+}
+
 export const httpHandler = {
   endpoints: [
-    {
-      scope: 'global',
-      method: 'POST',
-      path: 'api',
-      handle: (ctx: YtContext): Promise<void> => handleApi(ctx),
-    },
+    endpoint('GET', 'config', (rctx) => handlers.getConfig(rctx)),
+    endpoint('POST', 'config', (rctx, body) =>
+      handlers.putConfig(rctx, putConfigRequestSchema.parse(body)),
+    ),
+    endpoint('GET', 'sprint-data', (rctx) => handlers.getSprintData(rctx)),
+    endpoint('POST', 'sprint-register', (rctx, body) =>
+      handlers.registerSprint(rctx, registerSprintRequestSchema.parse(body)),
+    ),
+    endpoint('POST', 'capacity', (rctx, body) =>
+      handlers.writeCapacity(rctx, capacityWriteRequestSchema.parse(body)),
+    ),
+    endpoint('POST', 'capacity-reset', (rctx, body) =>
+      handlers.resetCapacity(rctx, capacityResetRequestSchema.parse(body)),
+    ),
+    endpoint('POST', 'focus-factor', (rctx, body) =>
+      handlers.overrideFocusFactor(rctx, overrideFocusFactorRequestSchema.parse(body)),
+    ),
+    endpoint('POST', 'calibration', (rctx, body) =>
+      handlers.setCalibration(rctx, setCalibrationRequestSchema.parse(body)),
+    ),
+    endpoint('GET', 'export', (rctx) => handlers.getExport(rctx)),
+    endpoint('POST', 'import', (rctx, body) =>
+      handlers.postImport(rctx, importRequestSchema.parse(body)),
+    ),
+    endpoint('GET', 'diagnostics', (rctx, _body, correlationId) =>
+      handlers.getDiagnostics(rctx, correlationId),
+    ),
   ],
 };
-
-export { createApp };

@@ -1,72 +1,13 @@
 {
   "$schema": "https://www.jetbrains.com/help/youtrack/devportal/apps-entity-extensions.html",
-  "comment": "App-owned custom properties (prefix scp). Primitive arrays are not supported by the SDK, so dynamic structures are stored as versioned JSON strings. name/start/finish on Sprint remain native and are managed via REST, not here.",
+  "comment": "App-owned custom properties (prefix scp). All app state is project-scoped versioned JSON so the backend (ctx.project / entities.Project) and the reminder workflow (issue.project) read and write the same documents. Native Sprint name/start/finish stay native and are managed through the current user's REST session, not here.",
   "entityTypeExtensions": [
-    {
-      "entityType": "Sprint",
-      "properties": {
-        "scpManaged": { "type": "boolean" },
-        "scpSchemaVersion": { "type": "integer" },
-        "scpProjectId": { "type": "string" },
-        "scpBoardId": { "type": "string" },
-        "scpSequence": { "type": "integer" },
-        "scpCreateOperationId": { "type": "string" },
-
-        "scpCapacityRevision": { "type": "integer" },
-        "scpCapacityJson": { "type": "string" },
-
-        "scpFocusFactor": { "type": "float" },
-        "scpFocusFactorSource": { "type": "string" },
-        "scpFocusFactorOverrideJson": { "type": "string" },
-
-        "scpRawCapacityMinutes": { "type": "integer" },
-        "scpConfirmedCapacityMinutes": { "type": "integer" },
-        "scpPlannedCapacityMinutes": { "type": "integer" },
-
-        "scpOriginalEffortMinutes": { "type": "integer" },
-        "scpCurrentEffortMinutes": { "type": "integer" },
-        "scpCompletedOriginalEffortMinutes": { "type": "integer" },
-        "scpObservedFocusFactor": { "type": "float" },
-        "scpUnresolvedIssueCount": { "type": "integer" },
-
-        "scpExcludedFromCalibration": { "type": "boolean" },
-        "scpCalibrationSkipReason": { "type": "string" },
-
-        "scpMetricsRevision": { "type": "integer" },
-        "scpMetricsDirty": { "type": "boolean" },
-        "scpDataIntegrityStatus": { "type": "string" },
-        "scpLastWorkflowUpdateAt": { "type": "integer" },
-        "scpLastRecalculatedAt": { "type": "integer" },
-        "scpLastRecalculatedBy": { "type": "user" },
-
-        "scpCompletionCalculatedAt": { "type": "integer" },
-        "scpCompletionCalculationJson": { "type": "string" }
-      }
-    },
-    {
-      "entityType": "Issue",
-      "properties": {
-        "scpIssueSchemaVersion": { "type": "integer" },
-        "scpMetricsSnapshotJson": { "type": "string" },
-        "scpWorkflowRevision": { "type": "integer" },
-        "scpWorkflowError": { "type": "string" }
-      }
-    },
     {
       "entityType": "Project",
       "properties": {
-        "scpConfigVersion": { "type": "integer" },
         "scpConfigJson": { "type": "string" },
-        "scpCapacityManagers": { "type": "string" },
-        "scpConfigRevision": { "type": "integer" }
-      }
-    },
-    {
-      "entityType": "AppGlobalStorage",
-      "properties": {
-        "scpYoutrackToken": { "type": "string" },
-        "scpYoutrackBaseUrl": { "type": "string" },
-        "scpStateJson": { "type": "string" }
+        "scpSprintDataJson": { "type": "string" },
+        "scpReminderStateJson": { "type": "string" }
       }
     }
   ]

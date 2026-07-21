@@ -1,34 +1,16 @@
 {
-  "$schema": "https://www.jetbrains.com/help/youtrack/devportal-apps/apps-settings.html",
-  "comment": "App-level settings surfaced to administrators. Per-project runtime configuration lives in the Project extension property scpConfigJson and is edited through the Sprint Capacity Settings widget.",
-  "settings": [
-    {
-      "key": "youtrackToken",
-      "name": "YouTrack API token",
-      "type": "string",
-      "default": "",
-      "description": "Permanent token the backend uses to call YouTrack's REST API as the app (the backend runtime has no automatic same-instance auth). Store a token with the app's scopes."
-    },
-    {
-      "key": "youtrackBaseUrl",
-      "name": "YouTrack base URL",
-      "type": "string",
-      "default": "http://localhost:8080",
-      "description": "Base URL the backend uses for same-instance REST calls."
-    },
-    {
-      "key": "reminderLeadDays",
-      "name": "Availability reminder lead days",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "Sprint Capacity Planner settings",
+  "description": "App-level settings. Per-project configuration (board, effort fields, participants) lives in the project's Sprint Capacity tab.",
+  "properties": {
+    "reminderLeadDays": {
       "type": "integer",
-      "default": 3,
-      "description": "Send an availability reminder to unconfirmed participants this many days before Sprint start. Informational only; never blocks."
-    },
-    {
-      "key": "reconciliationCron",
-      "name": "Reconciliation schedule (Quartz cron)",
-      "type": "string",
-      "default": "0 0 * * * ?",
-      "description": "Cron expression for the hourly authoritative reconciliation on-schedule workflow."
+      "title": "Availability reminder lead days",
+      "description": "Remind participants who have not confirmed their availability this many days before a Sprint starts. Informational only; never blocks planning. Defaults to 3 when unset.",
+      "minimum": 0,
+      "maximum": 30,
+      "default": 3
     }
-  ]
+  }
 }

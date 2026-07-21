@@ -19,9 +19,3 @@ export function newCorrelationId(now: number): string {
   counter = (counter + 1) % 1_000_000;
   return `cid-${now.toString(36)}-${randomSuffix()}-${counter}`;
 }
-
-/** An idempotent operation id for next-Sprint creation. */
-export function newOperationId(now: number): string {
-  counter = (counter + 1) % 1_000_000;
-  return `op-${now.toString(36)}-${randomSuffix()}-${counter}`;
-}
