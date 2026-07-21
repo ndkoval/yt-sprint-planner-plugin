@@ -18,6 +18,8 @@ export interface CreateNextSprintDialogProps {
   preview?: NextSprintPreview;
   /** How many unresolved issues would carry over from the current Sprint. */
   carryOverCount?: number;
+  /** True when the project has several teams — Sprints (and carry-over) span all of them. */
+  multiTeam?: boolean;
   creating?: boolean;
   onCancel(): void;
   onCreate(request: CreateNextSprintRequest): void;
@@ -30,6 +32,7 @@ export function CreateNextSprintDialog({
   show,
   preview,
   carryOverCount = 0,
+  multiTeam = false,
   creating = false,
   onCancel,
   onCreate,
@@ -94,8 +97,8 @@ export function CreateNextSprintDialog({
           <Checkbox
             label={
               carryOverCount > 0
-                ? `Carry over ${carryOverCount} unfinished issue${carryOverCount === 1 ? '' : 's'} from the current Sprint`
-                : 'Carry over unfinished issues from the current Sprint'
+                ? `Carry over ${carryOverCount} unfinished issue${carryOverCount === 1 ? '' : 's'} from the current Sprint${multiTeam ? ' (all teams)' : ''}`
+                : `Carry over unfinished issues from the current Sprint${multiTeam ? ' (all teams)' : ''}`
             }
             checked={moveUnresolvedIssues}
             disabled={creating}
@@ -117,6 +120,19 @@ export function CreateNextSprintDialog({
             </div>
           ) : null}
         </div>
+
+        {multiTeam ? (
+          <p
+            style={{
+              ...rowStyle,
+              font: 'var(--ring-font-smaller)',
+              color: 'var(--ring-secondary-color)',
+            }}
+          >
+            All teams share the new Sprint&apos;s dates; each team&apos;s focus factor is
+            calibrated from its own history.
+          </p>
+        ) : null}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--ring-unit)' }}>
           <Button onClick={onCancel} disabled={creating}>

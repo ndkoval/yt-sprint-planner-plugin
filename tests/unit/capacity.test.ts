@@ -7,8 +7,9 @@ import {
   remainingCapacityMinutes,
   committedFitMinutes,
   reapplyDefaults,
+  seedCapacityDocument,
 } from '../../src/domain/capacity/capacity.js';
-import { makeDoc, makeRow } from '../fixtures/capacity.js';
+import { makeDoc, makeParticipant, makeRow, makeTeam } from '../fixtures/capacity.js';
 
 describe('defaultCapacityMinutes', () => {
   it('applies workingDays x hoursPerDay x 60 at 100% (worked example: 4800)', () => {
@@ -139,10 +140,62 @@ describe('reapplyDefaults', () => {
     expect(next.rows['1-1']!.availableMinutes).toBe(1000);
   });
 
+  it('scales the recomputed default by the participant allocation map', () => {
+    const doc = makeDoc([
+      makeRow({ userId: 'alice', defaultMinutes: 4800, availableMinutes: 4800 }),
+      makeRow({ userId: 'bob', defaultMinutes: 4800, availableMinutes: 4800 }),
+    ]);
+    // 5 weekdays → full-time 2400; bob is half-time.
+    const next = reapplyDefaults(doc, '2024-01-01', '2024-01-05', 8, { bob: 0.5 });
+    expect(next.rows['alice']!.defaultMinutes).toBe(2400); // absent from the map ⇒ full-time
+    expect(next.rows['bob']!.defaultMinutes).toBe(1200);
+    expect(next.rows['bob']!.availableMinutes).toBe(1200);
+  });
+
   it('is pure: does not mutate the input document', () => {
     const doc = makeDoc([makeRow({ userId: '1-1', defaultMinutes: 4800 })]);
     const snapshot = JSON.parse(JSON.stringify(doc));
     reapplyDefaults(doc, '2024-01-01', '2024-01-05', 8);
     expect(doc).toEqual(snapshot);
+  });
+});
+
+describe('seedCapacityDocument', () => {
+  const NOW = 12345;
+  // 2024-01-01 .. 2024-01-12 = 10 weekdays → full-time 4800 minutes at 8h/day.
+  const seed = (team = makeTeam(), names: Record<string, string> = { alice: 'Alice A' }) =>
+    seedCapacityDocument(team, 8, names, '2024-01-01', '2024-01-12', NOW);
+
+  it('seeds one default row per ENABLED participant of the team', () => {
+    const team = makeTeam({
+      participants: [makeParticipant('alice'), makeParticipant('dan', { enabled: false })],
+    });
+    const doc = seed(team);
+    expect(Object.keys(doc.rows)).toEqual(['alice']);
+    expect(doc.rows['alice']).toEqual({
+      userId: 'alice',
+      displayNameSnapshot: 'Alice A',
+      defaultMinutes: 4800,
+      availableMinutes: 4800,
+      availableWasCustomized: false,
+      note: '',
+      updatedAt: NOW,
+      updatedBy: 'alice',
+    });
+    expect(doc.version).toBe(2);
+  });
+
+  it('scales each row default by the participant allocation', () => {
+    const team = makeTeam({ participants: [makeParticipant('alice', { allocation: 0.5 })] });
+    const doc = seed(team);
+    expect(doc.rows['alice']!.defaultMinutes).toBe(2400);
+    expect(doc.rows['alice']!.availableMinutes).toBe(2400);
+  });
+
+  it('falls back to the login when no display name is known, and copies the participant note', () => {
+    const team = makeTeam({ participants: [makeParticipant('alice', { note: 'on-call' })] });
+    const doc = seedCapacityDocument(team, 8, {}, '2024-01-01', '2024-01-12', NOW);
+    expect(doc.rows['alice']!.displayNameSnapshot).toBe('alice');
+    expect(doc.rows['alice']!.note).toBe('on-call');
   });
 });

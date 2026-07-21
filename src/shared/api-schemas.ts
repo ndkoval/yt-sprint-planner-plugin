@@ -7,7 +7,6 @@ import {
   focusFactorSourceSchema,
   isoDateSchema,
   projectConfigSchema,
-  sprintEntrySchema,
   userIdSchema,
 } from './schemas.js';
 
@@ -20,6 +19,9 @@ export const putConfigRequestSchema = z
   })
   .strict();
 
+/** Optional team discriminator (resolves to the only team when omitted). */
+const teamId = z.string().min(1).optional();
+
 export const registerSprintRequestSchema = z
   .object({
     sprint: z
@@ -30,14 +32,24 @@ export const registerSprintRequestSchema = z
         finish: isoDateSchema,
       })
       .strict(),
-    focusFactor: z.number().min(0).max(1).optional(),
-    focusFactorSource: focusFactorSourceSchema.optional(),
+    teams: z
+      .record(
+        z.string().min(1),
+        z
+          .object({
+            focusFactor: z.number().min(0).max(1),
+            focusFactorSource: focusFactorSourceSchema,
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict();
 
 export const capacityWriteRequestSchema = z
   .object({
     sprintId: z.string().min(1),
+    teamId,
     target: z.union([z.literal('me'), z.object({ userId: userIdSchema }).strict()]),
     expectedRevision: z.number().int().min(0),
     availableMinutes: minutes.optional(),
@@ -51,6 +63,7 @@ export const capacityWriteRequestSchema = z
 export const capacityResetRequestSchema = z
   .object({
     sprintId: z.string().min(1),
+    teamId,
     userId: userIdSchema,
     expectedRevision: z.number().int().min(0),
   })
@@ -59,6 +72,7 @@ export const capacityResetRequestSchema = z
 export const overrideFocusFactorRequestSchema = z
   .object({
     sprintId: z.string().min(1),
+    teamId,
     reason: z.string().min(1).max(2000),
     newValue: z.number().min(0).max(1),
   })
@@ -67,6 +81,7 @@ export const overrideFocusFactorRequestSchema = z
 export const setCalibrationRequestSchema = z
   .object({
     sprintId: z.string().min(1),
+    teamId,
     excluded: z.boolean(),
     reason: z.string().max(2000).optional(),
   })
@@ -75,14 +90,25 @@ export const setCalibrationRequestSchema = z
     message: 'a reason is required when excluding a Sprint from calibration',
   });
 
+export const savePrefsRequestSchema = z
+  .object({
+    lastProjectKey: z.string().min(1).max(100).nullable(),
+  })
+  .strict();
+
+/**
+ * Import envelope. The bundle's `config`/`sprints` are validated only structurally
+ * here — the handler migrates them from any supported schema version (a pre-teams
+ * v0.2.0 export must stay restorable) and then strict-validates the result.
+ */
 export const importRequestSchema = z
   .object({
     bundle: z
       .object({
         exportedAt: z.number().int(),
         configRevision: z.number().int().min(0),
-        config: projectConfigSchema.nullable(),
-        sprints: z.record(z.string(), sprintEntrySchema),
+        config: z.unknown(),
+        sprints: z.unknown(),
       })
       .strict(),
     dryRun: z.boolean(),

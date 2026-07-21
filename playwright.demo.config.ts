@@ -29,7 +29,7 @@ export default defineConfig({
   retries: 0,
   workers: 1,
   reporter: [['list'], ['html', { outputFolder: 'artifacts/demo/playwright-report', open: 'never' }]],
-  timeout: 180_000,
+  timeout: 300_000, // the walkthrough reel now covers teams + multi-project scenes
   expect: { timeout: 15_000 },
   use: {
     baseURL: BASE_URL,

@@ -43,7 +43,44 @@ export type ApiErrorCode =
 /** Transport envelope for every backend response. */
 export type BackendEnvelope<T> = { ok: true; data: T } | { ok: false; error: ApiError };
 
-/** A native Sprint plus the app's stored state and live-computed metrics. */
+/**
+ * One team's slice of a Sprint: its stored planning state plus metrics computed
+ * live over the issues ATTRIBUTED to the team (assignee is a team member).
+ * Unassigned issues belong to no team and only appear in the Sprint totals.
+ */
+export interface TeamSprintView {
+  teamId: string;
+  teamName: string;
+
+  capacityRevision: number;
+  capacity: CapacityDocument;
+
+  focusFactor: number;
+  focusFactorSource: FocusFactorSource;
+  focusFactorOverride: FocusFactorOverride | null;
+  excludedFromCalibration: boolean;
+  calibrationSkipReason: string | null;
+
+  rawCapacityMinutes: number;
+  plannedCapacityMinutes: number;
+
+  originalEffortMinutes: number;
+  currentEffortMinutes: number;
+  completedOriginalEffortMinutes: number;
+  observedFocusFactor: number | null;
+
+  /** Per-assignee effort (keyed by member login) for per-person planning load. */
+  assignedEffort: Record<string, AssigneeEffortView>;
+  /** Unresolved team-attributed issues currently in the Sprint. */
+  unresolvedIssueCount: number;
+}
+
+/**
+ * A native Sprint plus the app's stored state and live-computed metrics.
+ * Per-team planning state and metrics live in `teams` (config order; entries for
+ * deleted teams are retained in storage but hidden here); the sprint-level fields
+ * aggregate ALL issues and all teams' capacity.
+ */
 export interface SprintView {
   id: string;
   name: string;
@@ -56,23 +93,20 @@ export interface SprintView {
   managed: boolean;
   sequence: number;
 
-  capacityRevision: number;
-  capacity: CapacityDocument;
+  /** Per-team views in config order (teams missing an entry get an empty view). */
+  teams: TeamSprintView[];
 
-  focusFactor: number;
-  focusFactorSource: FocusFactorSource;
-  focusFactorOverride: FocusFactorOverride | null;
-
+  /** Sum of all teams' raw capacity. */
   rawCapacityMinutes: number;
+  /** Sum of all teams' planned capacity (each with its own Focus Factor). */
   plannedCapacityMinutes: number;
 
+  /** Effort over ALL Sprint issues (every team, unassigned and outside assignees). */
   originalEffortMinutes: number;
   currentEffortMinutes: number;
   completedOriginalEffortMinutes: number;
+  /** completed (all issues) / raw (sum of teams); null when raw is 0. */
   observedFocusFactor: number | null;
-
-  excludedFromCalibration: boolean;
-  calibrationSkipReason: string | null;
 
   /** UTC ms when these metrics were computed (metrics are always computed live). */
   computedAt: number;
@@ -82,9 +116,7 @@ export interface SprintView {
   /** Ids of Sprint issues with no Original Effort (UI warning list). */
   issuesMissingOriginalEffort: string[];
 
-  /** Per-assignee effort (keyed by user login) for per-person planning load. */
-  assignedEffort: Record<string, AssigneeEffortView>;
-  /** Effort on issues left unassigned (preserving project-direction ownership). */
+  /** Effort on issues left unassigned (they belong to no team). */
   unassignedEffort: AssigneeEffortView;
   /** Unresolved issues currently in the Sprint (how many would carry over). */
   unresolvedIssueCount: number;
@@ -179,19 +211,29 @@ export interface SprintDataResponse {
 
 /**
  * POST sprint-register — upsert the app state for a native Sprint. Called after the
- * widget creates a Sprint (seeds sequence + capacity) and after date/name edits
- * (refreshes snapshots; non-customized capacity rows track the new default).
+ * widget creates a Sprint (seeds sequence + per-team capacity) and after date/name
+ * edits (refreshes snapshots; non-customized capacity rows track the new default).
+ * Every CURRENT config team gets a {@link TeamSprintEntry}; the optional `teams` map
+ * carries client-computed Focus Factor seeds for NEW entries (bootstrap otherwise).
  */
 export interface RegisterSprintRequest {
   sprint: { id: string; name: string; start: string; finish: string };
-  /** Focus factor for a NEW entry (computed by the manager's client from history). */
-  focusFactor?: number | undefined;
-  focusFactorSource?: FocusFactorSource | undefined;
+  /** Per-team Focus Factor seeds for a NEW entry, keyed by team id. */
+  teams?:
+    | Record<string, { focusFactor: number; focusFactorSource: FocusFactorSource }>
+    | undefined;
 }
+
+/**
+ * `teamId` on the team-scoped mutations is optional: omitted, it resolves to the
+ * config's ONLY team (single-team projects and older scripts keep working) and is a
+ * validation error when the project has several teams.
+ */
 
 /** POST capacity */
 export interface CapacityWriteRequest {
   sprintId: string;
+  teamId?: string | undefined;
   /** 'me' resolves to the caller server-side; a login targets another row (manager-only). */
   target: 'me' | { userId: string };
   expectedRevision: number;
@@ -202,6 +244,7 @@ export interface CapacityWriteRequest {
 /** POST capacity-reset */
 export interface CapacityResetRequest {
   sprintId: string;
+  teamId?: string | undefined;
   userId: string;
   expectedRevision: number;
 }
@@ -209,6 +252,7 @@ export interface CapacityResetRequest {
 /** POST focus-factor */
 export interface OverrideFocusFactorRequest {
   sprintId: string;
+  teamId?: string | undefined;
   reason: string;
   newValue: number;
 }
@@ -216,6 +260,7 @@ export interface OverrideFocusFactorRequest {
 /** POST calibration */
 export interface SetCalibrationRequest {
   sprintId: string;
+  teamId?: string | undefined;
   excluded: boolean;
   /** Required when excluding. */
   reason?: string | undefined;
@@ -229,9 +274,18 @@ export interface ExportBundle {
   sprints: Record<string, SprintEntry>;
 }
 
-/** POST import */
+/**
+ * POST import. The bundle's documents are accepted at ANY supported schema version
+ * (a v0.2.0 pre-teams export imports fine — it is migrated on the way in), so
+ * export-before-upgrade backups stay restorable.
+ */
 export interface ImportRequest {
-  bundle: ExportBundle;
+  bundle: {
+    exportedAt: number;
+    configRevision: number;
+    config?: unknown;
+    sprints?: unknown;
+  };
   dryRun: boolean;
 }
 export interface ImportResult {
@@ -240,13 +294,33 @@ export interface ImportResult {
   configured: boolean;
 }
 
+/**
+ * GET/POST prefs — tiny per-USER preferences (a `scpPrefsJson` User extension
+ * property). Unlike every other endpoint these take NO project parameter: the
+ * main-menu planner uses them to remember the caller's last-picked project
+ * (the sandboxed widget iframe has no reliable localStorage).
+ */
+export interface UserPrefs {
+  /** Key (shortName) of the project last picked in the main-menu planner. */
+  lastProjectKey?: string | undefined;
+}
+export interface SavePrefsRequest {
+  /** New last-picked project key; null clears it. */
+  lastProjectKey: string | null;
+}
+
 /** GET diagnostics (manager-only). */
 export interface DiagnosticsResponse {
   correlationId: string;
   configured: boolean;
   configRevision: number;
   managedSprintCount: number;
-  sprints: Array<{ id: string; name: string; sequence: number; capacityRevision: number }>;
+  sprints: Array<{
+    id: string;
+    name: string;
+    sequence: number;
+    teams: Array<{ teamId: string; capacityRevision: number }>;
+  }>;
 }
 
 // ---------------------------------------------------------------------------

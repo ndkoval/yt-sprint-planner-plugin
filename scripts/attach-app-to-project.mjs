@@ -36,9 +36,13 @@ try {
       await p.waitForTimeout(1000);
       await p.getByText(/^Attach app$/).click();
       await p.waitForTimeout(1200);
-      await p.getByPlaceholder(/Filter items/i).fill(APP_TITLE);
+      // Scope filter + option click to the POPUP: the app's global MAIN_MENU_ITEM
+      // ("Sprint Capacity Planner") matches the same text in the page sidebar, and an
+      // unscoped .first() clicks THAT instead of the dialog option (silent no-op).
+      const popup = p.locator('[data-test="ring-popup"]').last();
+      await popup.getByPlaceholder(/Filter items/i).fill(APP_TITLE);
       await p.waitForTimeout(1600);
-      await p.getByText(new RegExp(APP_TITLE, 'i')).first().click();
+      await popup.getByText(new RegExp(APP_TITLE, 'i')).first().click();
       await p.waitForTimeout(3500);
     } catch {
       await p.keyboard.press('Escape').catch(() => {});

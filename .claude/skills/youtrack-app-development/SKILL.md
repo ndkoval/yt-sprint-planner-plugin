@@ -20,14 +20,33 @@ An installable app is a single ZIP built from `dist/` containing:
 
 Build: `npm run build` → `dist/`; package: `npm run pack` → `dist/sprint-capacity-planner.zip`.
 
-## Extension points & properties
+## Extension points & properties (verified live on 2025.3)
 
-- Widgets attach at declared extension points (project tab / project settings). SPIKE: confirm
-  the exact `extensionPoint` enum values for a project tab vs. settings pane on the target version.
+- `PROJECT_TAB` **does not exist** on 2025.3 — the import rejects it ("declared incorrectly")
+  and it is absent from the official extension-points reference, despite appearing in the
+  schemastore JSON schema. Working placements: `PROJECT_SETTINGS` (project sidebar item),
+  `MAIN_MENU_ITEM` (global sidebar; NO project context — the widget needs its own picker),
+  `ISSUE_OPTIONS_MENU_ITEM`, `DASHBOARD_WIDGET`.
+- **Widget names must be unique within the app.** YouTrack resolves the settings-tab URL as
+  `?tab=<appName>%3A<WIDGET NAME>`; two widgets with the same name silently break that tab
+  (it falls back to default project panels).
+- PROJECT_SETTINGS widgets are served to regular members too (visibility is not admin-gated);
+  a member seeing "Unable to load" usually means a 403 on a RESOURCE the widget fetches —
+  most often the agile board: **REST-created boards default to owner-only sharing.** Create
+  them with `readSharingSettings`/`updateSharingSettings` `{ projectBased: true }`.
+- The host shows a one-time per-user consent prompt when an app widget issues a **DELETE**
+  over `fetchYouTrack` (e.g. removing an issue from a sprint): "Allow once / Allow and don't
+  ask again / Deny". The request is HELD until answered — automation must click it (a clean
+  app reinstall resets the grant).
 - Extension properties are declared in `entity-extensions.json` with primitive types
   (`boolean`, `integer`, `float`, `string`, `user`). **Primitive arrays are NOT supported** —
-  store dynamic/nested structures as **versioned JSON strings** (e.g. `scpCapacityJson`), always
+  store dynamic/nested structures as **versioned JSON strings** (e.g. `scpConfigJson`), always
   with a `version` field and unknown-field preservation for migrations.
+- Extension-property writes are **last-write-wins**: two overlapping backend requests
+  read-modify-write the whole document and neither aborts (verified: concurrent writes to two
+  teams lost one update 5/5). There is no compare-and-set — converge from the CLIENT by
+  write → re-read (new request) → verify → re-apply (see `ApiClient.writeCapacityVerified`).
+  Size is not a practical limit (a 1.13 MB property round-trips in ~0.5 s).
 
 ## REST vs Workflow API — the critical split
 
@@ -62,5 +81,20 @@ navigation and visible focus, Escape closes dialogs.
 ## Authorization
 
 All mutations are authorised **server-side** (`src/domain/permissions`). Frontend visibility is
-never authorization. Board create/edit additionally requires the caller's real Board permission
-(resolved at the REST boundary), never a shared admin token in production.
+never authorization. The app defines NO permission scheme of its own: a "manager" is the
+project leader or any holder of YouTrack's `UPDATE_PROJECT` permission on the project, checked
+in the HTTP handler via `ctx.currentUser.hasPermission('UPDATE_PROJECT', projectEntity)`
+(verified working on 2025.3). Board create/edit additionally requires the caller's real Board
+permission (resolved at the REST boundary), never a shared admin token in production.
+
+## Hub REST (provisioning — the "not exposed over REST" notes were wrong)
+
+- Project TEAM membership: `POST /hub/api/rest/projectteams/{teamId}/users {id: <hubUserId>}`
+  (team id from `/hub/api/rest/projects?query=<name>&fields=id,name,team(id)`).
+- Role grants (e.g. a non-leader project admin): `POST /hub/api/rest/users/{id}/projectroles
+  {role: {key: 'project-admin'}, project: {id: <hubProjectId>}}`.
+- A Hub-created user CANNOT log in until it has a `LoginuserdetailsJSON` credentials detail:
+  `POST /hub/api/rest/users/{id}` with `{details: [{type: 'LoginuserdetailsJSON', authModule:
+  {id: <core module id>}, login, password: {type: 'PlainpasswordJSON', value: ...}}]}` —
+  `POST /hub/api/rest/users {password}` alone silently creates a credential-less user.
+  See `scripts/lib/seed-lib.mjs` for all three.

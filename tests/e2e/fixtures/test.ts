@@ -2,8 +2,8 @@
  * Extended Playwright test with persona-scoped page fixtures.
  *
  * Each persona fixture opens a fresh browser context using that persona's stored
- * auth state, so a single test can drive Manager, Alice, Bob and an Unauthorized
- * user against the same instance (needed for the permission + conflict journeys).
+ * auth state, so a single test can drive Manager, Alice, Bob and the no-role Eve
+ * against the same instance (needed for the permission + conflict journeys).
  *
  * All specs should gate on `hasInstance` via `test.skip(!hasInstance, ...)`.
  */
@@ -14,7 +14,7 @@ interface PersonaFixtures {
   managerPage: Page;
   alicePage: Page;
   bobPage: Page;
-  unauthorizedPage: Page;
+  evePage: Page;
 }
 
 async function personaPage(
@@ -41,8 +41,8 @@ export const test = base.extend<PersonaFixtures>({
   bobPage: async ({ browser }, use) => {
     await personaPage(browser, 'bob', use);
   },
-  unauthorizedPage: async ({ browser }, use) => {
-    await personaPage(browser, 'unauthorized', use);
+  evePage: async ({ browser }, use) => {
+    await personaPage(browser, 'eve', use);
   },
 });
 

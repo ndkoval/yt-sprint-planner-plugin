@@ -18,6 +18,7 @@ import {
   overrideFocusFactorRequestSchema,
   putConfigRequestSchema,
   registerSprintRequestSchema,
+  savePrefsRequestSchema,
   setCalibrationRequestSchema,
 } from '../shared/api-schemas.js';
 import type { BackendEnvelope } from '../shared/api.js';
@@ -45,7 +46,7 @@ interface YtContext {
   currentUser?: {
     login?: string;
     fullName?: string;
-    isInGroup?(group: string): boolean;
+    hasPermission?(permissionKey: string, project?: unknown): boolean;
   } | null;
 }
 
@@ -78,6 +79,7 @@ function realEnv(): BackendEnv {
         setProperty(name: string, value: string | null): void {
           project.extensionProperties[name] = value;
         },
+        raw: project,
       };
     },
     findUserNameByLogin(login: string): string | null {
@@ -98,10 +100,19 @@ function callerOf(ctx: YtContext): BackendUser {
     throw forbidden('No authenticated user.');
   }
   const login = u.login;
+  const props = (u as { extensionProperties?: Record<string, unknown> }).extensionProperties;
   return {
     login,
     name: typeof u.fullName === 'string' && u.fullName.length > 0 ? u.fullName : login,
-    isInGroup: (group: string) => u.isInGroup?.(group) === true,
+    // The app's manager role = YouTrack's own project-settings right, nothing custom.
+    canUpdateProject: (project) => u.hasPermission?.('UPDATE_PROJECT', project.raw) === true,
+    getProperty(name: string): string | null {
+      const value = props?.[name];
+      return typeof value === 'string' && value.length > 0 ? value : null;
+    },
+    setProperty(name: string, value: string | null): void {
+      if (props) props[name] = value;
+    },
   };
 }
 
@@ -150,8 +161,51 @@ function endpoint(method: 'GET' | 'POST', path: string, handle: Handle) {
   };
 }
 
+/**
+ * A project-INDEPENDENT endpoint (per-user preferences). Same envelope contract,
+ * but no `project` query parameter and no Project resolution.
+ */
+function userEndpoint(
+  method: 'GET' | 'POST',
+  path: string,
+  handle: (user: BackendUser, body: unknown) => unknown,
+) {
+  return {
+    method,
+    path,
+    scope: 'global' as const,
+    handle: (ctx: YtContext): void => {
+      const correlationId = newCorrelationId(Date.now());
+      try {
+        let body: unknown = null;
+        if (method === 'POST') {
+          try {
+            body = ctx.request.json();
+          } catch {
+            body = null;
+          }
+        }
+        const envelope: BackendEnvelope<unknown> = { ok: true, data: handle(callerOf(ctx), body) };
+        ctx.response.json(envelope);
+      } catch (err) {
+        const error = toApiError(err, correlationId);
+        console.error(
+          `scp backend [${correlationId}] ${error.code}: ` +
+            (err instanceof Error ? err.message : String(err)),
+        );
+        const envelope: BackendEnvelope<never> = { ok: false, error };
+        ctx.response.json(envelope);
+      }
+    },
+  };
+}
+
 export const httpHandler = {
   endpoints: [
+    userEndpoint('GET', 'prefs', (user) => handlers.getPrefs(user)),
+    userEndpoint('POST', 'prefs', (user, body) =>
+      handlers.savePrefs(user, savePrefsRequestSchema.parse(body)),
+    ),
     endpoint('GET', 'config', (rctx) => handlers.getConfig(rctx)),
     endpoint('POST', 'config', (rctx, body) =>
       handlers.putConfig(rctx, putConfigRequestSchema.parse(body)),

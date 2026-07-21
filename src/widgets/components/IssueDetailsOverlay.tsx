@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import Button from '@jetbrains/ring-ui-built/components/button/button';
+import Select from '@jetbrains/ring-ui-built/components/select/select';
 import type { ApiClient } from '../api-client';
 import type { IssueView } from '../../shared/api';
 
@@ -7,15 +8,27 @@ export interface IssueTeammate {
   userId: string;
   login: string;
   name: string;
+  /** The team the person belongs to (shown as the option's description); optional. */
+  team?: string | undefined;
 }
 
 export interface IssueDetailsOverlayProps {
   issue: IssueView;
   client: ApiClient;
-  /** Sprint teammates, for the assignee dropdown. */
+  /**
+   * Assignee dropdown candidates — members of ALL the project's teams (team names
+   * shown as descriptions), so handing an issue to another team is possible right
+   * here. Shared members are listed once.
+   */
   teammates: IssueTeammate[];
   /** Hours in one capacity day, for editing period effort fields in days. */
   hoursPerDay: number;
+  /**
+   * Document-Y of the card that was double-clicked. The overlay anchors next to it
+   * (the widget iframe is very tall — a viewport-centered panel could open far away
+   * from where the user is looking).
+   */
+  anchorY?: number;
   onClose(): void;
   /** Called after a save so the planner can refresh its metrics. */
   onChanged?(): void;
@@ -126,19 +139,22 @@ function initials(name: string): string {
 }
 
 /**
- * In-page issue editor styled to read like YouTrack's own issue slide-over. Double-clicking a
- * board card opens this as a full-page overlay OVER the planner (dimmed behind it —
- * `enterModalMode`), never a new tab/window. YouTrack blocks embedding its native issue page in
- * the widget's opaque-origin iframe, so this is the app's own editor driven through the YouTrack
- * REST API in the CURRENT USER's context (`host.fetchYouTrack`) — the user's real permissions
- * apply. Edits the title, description, comments, tags, assignee, effort and enum fields via
- * direct issue updates (the `/commands` endpoint isn't reachable through the app host).
+ * In-page issue editor styled to read like YouTrack's own issue view. Double-clicking
+ * a board card opens this as a WIDE panel anchored right where the card is, over a
+ * dimmed backdrop that spans the whole widget — never a new tab (though the issue id
+ * in the header IS a link that opens the native issue view in one). YouTrack blocks
+ * embedding its native issue page in the widget's opaque-origin iframe, so this is
+ * the app's own editor driven through the YouTrack REST API in the CURRENT USER's
+ * context (`host.fetchYouTrack`) — the user's real permissions apply. Edits the
+ * title, description, comments, assignee, effort and enum fields (field values use
+ * Ring UI inline selects, like native YouTrack). Escape or the backdrop closes it.
  */
 export function IssueDetailsOverlay({
   issue,
   client,
   teammates,
   hoursPerDay,
+  anchorY,
   onClose,
   onChanged,
 }: IssueDetailsOverlayProps): React.JSX.Element {
@@ -174,12 +190,22 @@ export function IssueDetailsOverlay({
   }, [yt, id]);
 
   useEffect(() => {
-    void client.enterModalMode();
     void reload().catch((e) => setError(e instanceof Error ? e.message : String(e)));
-    return () => {
-      void client.exitModalMode();
-    };
   }, []);
+
+  // Escape closes (Ring UI convention) — the backdrop click does too. When a Ring
+  // popup (an open inline select) is on screen, Escape belongs to IT: close only
+  // the topmost layer. Capture phase: we must observe the popup BEFORE Ring's own
+  // handler unmounts it, or both layers close on one keypress.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return;
+      if (document.querySelector('[data-test~="ring-popup"]')) return;
+      onClose();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
 
   const run = useCallback(
     async (fn: () => Promise<void>): Promise<void> => {
@@ -210,32 +236,50 @@ export function IssueDetailsOverlay({
     run(() =>
       yt(`issues/${encodeURIComponent(id)}/comments`, 'POST', { text: comment }).then(() => setComment('')),
     );
+  const openNative = (): void => {
+    // The sandboxed iframe blocks top-frame navigation; window.open is the reliable path.
+    window.open(`/issue/${encodeURIComponent(id)}`, '_blank', 'noopener');
+  };
   const U = 'var(--ring-unit)';
   const fields = data?.customFields ?? [];
   const assigneeType = fields.find((f) => /^assignee$/i.test(f.name))?.$type ?? 'SingleUserIssueCustomField';
 
-  // The app host already presents the widget as a fixed ~600px centred modal (it dims the page
-  // behind), so we fill that modal edge-to-edge — no extra backdrop or right-aligned inner panel
-  // (that caused double-dimming + a cramped centre). A narrow fields column (native proportion)
-  // leaves the issue content the larger share.
-  // Dimmed in-page overlay: the host presents the widget as a fixed ~600px modal (dimming the
-  // planner behind it), and this fills that modal. A proper dimmed overlay can only be the host
-  // modal (a wider overlay isn't possible — the iframe can't read the window height to stay
-  // on-screen), so it uses the native ~600px slide-over width.
-  const rootPanel: React.CSSProperties = {
-    position: 'fixed',
+  // Anchored WIDE panel over a dimmed backdrop, both inside the widget's (very tall)
+  // iframe. Anchoring to the double-clicked card keeps the editor where the user is
+  // looking; natural height up to a sane cap avoids a pointless inner scrollbar.
+  const panelTop = Math.max(16, (anchorY ?? 16) - 48);
+  // Z-order: above the planner content (auto/0) but BELOW Ring UI's overlay layer
+  // (--ring-overlay-z-index: 5) — otherwise the inline selects' popups render
+  // behind this panel and their options can't be clicked.
+  const backdrop: React.CSSProperties = {
+    position: 'absolute',
     inset: 0,
-    zIndex: 2147483000,
-    overflow: 'auto',
+    zIndex: 3,
+    background: 'rgba(0, 0, 0, 0.42)',
+  };
+  const rootPanel: React.CSSProperties = {
+    position: 'absolute',
+    top: panelTop,
+    // Centered WITHOUT a transform: a transformed ancestor becomes the containing
+    // block for the inline selects' Ring popups, which then compute document-based
+    // coordinates against it and render ~a page away from their anchors.
+    left: 'max(24px, calc((100% - 1080px) / 2))',
+    width: 'min(1080px, calc(100% - 48px))',
+    zIndex: 4,
     boxSizing: 'border-box',
     background: 'var(--ring-content-background-color, #fff)',
     color: 'var(--ring-text-color)',
+    border: `1px solid ${LINE}`,
+    borderRadius: 8,
+    boxShadow: '0 12px 40px rgba(0, 0, 0, 0.3)',
     padding: `calc(${U} * 3)`,
     display: 'grid',
-    gridTemplateColumns: 'minmax(0,1fr) 184px',
+    gridTemplateColumns: 'minmax(0, 1fr) 240px',
     gridTemplateRows: 'auto max-content',
     alignContent: 'start',
     columnGap: `calc(${U} * 3)`,
+    maxHeight: 760,
+    overflowY: 'auto',
   };
   const metaText: React.CSSProperties = { fontSize: 13, lineHeight: '20px', color: SECONDARY };
   const bare: React.CSSProperties = {
@@ -246,19 +290,6 @@ export function IssueDetailsOverlay({
     padding: 0,
     font: 'inherit',
     boxSizing: 'border-box',
-  };
-  const valueControl: React.CSSProperties = {
-    border: 'none',
-    background: 'transparent',
-    color: LINK,
-    fontSize: 15,
-    fontWeight: 500,
-    cursor: 'pointer',
-    padding: 0,
-    width: '100%',
-    appearance: 'none',
-    WebkitAppearance: 'none',
-    MozAppearance: 'none',
   };
 
   const chipSquare = (text: string, fieldName: string): React.JSX.Element => (
@@ -294,11 +325,13 @@ export function IssueDetailsOverlay({
     </span>
   );
 
-  // One field block in the native layout: a left column (gray label + blue value stacked) and
-  // the icon/chip/avatar on the right, VERTICALLY CENTRED across the whole block (as in native).
+  // One field block in the native layout: a left column (gray label + value control
+  // stacked) and the icon/chip/avatar on the right, vertically centred (as in native).
   const field = (name: string, right: React.ReactNode, value: React.ReactNode): React.JSX.Element => (
     <div
       key={name}
+      data-test="scp-field"
+      data-field={name}
       style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: U, marginBottom: `calc(${U} * 2.5)` }}
     >
       <div style={{ minWidth: 0, flex: 1 }}>
@@ -343,13 +376,52 @@ export function IssueDetailsOverlay({
   }
   groups.reverse();
 
+  // Assignee options: one entry per person (shared members listed once), team names
+  // as descriptions. Rendered with a Ring INLINE select so it reads like native YT.
+  const assigneeOptions = (() => {
+    const byLogin = new Map<string, { key: string; label: string; description?: string }>();
+    for (const m of teammates) {
+      const existing = byLogin.get(m.login);
+      if (existing) {
+        if (m.team && existing.description && !existing.description.includes(m.team)) {
+          existing.description = `${existing.description}, ${m.team}`;
+        }
+      } else {
+        byLogin.set(m.login, {
+          key: m.login,
+          label: m.name,
+          ...(m.team ? { description: m.team } : {}),
+        });
+      }
+    }
+    return [{ key: '', label: 'Unassigned' }, ...byLogin.values()];
+  })();
+
   return (
-    <div data-test="scp-issue-overlay" style={rootPanel}>
-      {/* Header */}
-      <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: `calc(${U} * 2)` }}>
+    <>
+      <div data-test="scp-issue-overlay-backdrop" onClick={() => !busy && onClose()} style={backdrop} />
+      <div data-test="scp-issue-overlay" role="dialog" aria-label={`Issue ${id}`} style={rootPanel}>
+        {/* Header */}
+        <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: `calc(${U} * 2)` }}>
           <div style={metaText}>
             <div>
-              <span style={{ color: LINK, fontWeight: 500 }}>{id}</span>
+              <button
+                data-test="scp-issue-overlay-open-native"
+                onClick={openNative}
+                title={`Open ${id} in a new tab`}
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  padding: 0,
+                  color: LINK,
+                  fontWeight: 500,
+                  font: 'inherit',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                }}
+              >
+                {id} ↗
+              </button>
               {data?.reporter?.name ? (
                 <>
                   {'  ·  Created by '}
@@ -407,7 +479,7 @@ export function IssueDetailsOverlay({
           <div style={{ borderTop: `1px solid ${LINE}`, margin: `calc(${U} * 3) 0 calc(${U} * 2)` }} />
 
           <div style={{ display: 'flex', gap: U, alignItems: 'flex-start' }}>
-            {avatar('Nikita Koval', 28)}
+            {avatar(client.me.name || client.me.login || 'Me', 28)}
             <div style={{ flex: 1 }}>
               <textarea
                 aria-label="Write a comment"
@@ -475,44 +547,57 @@ export function IssueDetailsOverlay({
           {fields.map((f) => {
             const values = f.projectCustomField?.bundle?.values ?? [];
             if (/^assignee$/i.test(f.name)) {
+              // Read the CURRENT assignee from the freshly fetched issue (`data`
+              // reloads after every save) — the `issue` prop is a snapshot from the
+              // moment the overlay opened and would show stale values after edits.
+              const assigneeValue = Array.isArray(f.value) ? null : f.value;
+              const currentLogin = assigneeValue?.login ?? '';
+              const currentName = assigneeValue?.fullName ?? assigneeValue?.name ?? null;
+              const selected =
+                assigneeOptions.find((o) => o.key === currentLogin) ??
+                (currentLogin.length > 0
+                  ? { key: currentLogin, label: currentName ?? currentLogin }
+                  : assigneeOptions[0]!);
               return field(
                 'Assignee',
-                issue.assigneeName ? avatar(issue.assigneeName) : null,
-                <select
-                  aria-label="Assignee"
-                  style={valueControl}
-                  value={issue.assigneeId ?? ''}
+                currentName ? avatar(currentName) : null,
+                <Select
+                  type={Select.Type.INLINE}
+                  data={assigneeOptions}
+                  selected={selected}
                   disabled={busy}
-                  onChange={(e) => void setFieldValue('Assignee', f.$type ?? assigneeType, e.target.value ? { id: e.target.value } : null)}
-                >
-                  <option value="">Unassigned</option>
-                  {teammates.map((m) => (
-                    <option key={m.userId} value={m.userId}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>,
+                  onSelect={(item) => {
+                    if (item === null) return;
+                    const login = String(item.key);
+                    void setFieldValue(
+                      'Assignee',
+                      f.$type ?? assigneeType,
+                      login.length > 0 ? { login } : null,
+                    );
+                  }}
+                />,
               );
             }
             if (values.length > 0) {
               const current = Array.isArray(f.value) ? '' : (f.value?.name ?? '');
+              const options = values
+                .filter((v) => typeof v.name === 'string')
+                .map((v) => ({ key: v.name!, label: v.name! }));
+              const selected = options.find((o) => o.key === current) ?? null;
               return field(
                 f.name,
                 current ? chipSquare(current, f.name) : null,
-                <select
-                  aria-label={f.name}
-                  style={valueControl}
-                  value={current}
+                <Select
+                  type={Select.Type.INLINE}
+                  data={options}
+                  selected={selected}
+                  label="—"
                   disabled={busy}
-                  onChange={(e) => void setFieldValue(f.name, f.$type ?? 'SingleEnumIssueCustomField', { name: e.target.value })}
-                >
-                  {current === '' ? <option value="">—</option> : null}
-                  {values.map((v) => (
-                    <option key={v.name} value={v.name}>
-                      {v.name}
-                    </option>
-                  ))}
-                </select>,
+                  onSelect={(item) => {
+                    if (item === null) return;
+                    void setFieldValue(f.name, f.$type ?? 'SingleEnumIssueCustomField', { name: String(item.key) });
+                  }}
+                />,
               );
             }
             if (isPeriod(f.$type)) {
@@ -525,13 +610,23 @@ export function IssueDetailsOverlay({
                   aria-label={f.name}
                   type="text"
                   inputMode="decimal"
-                  style={{ ...valueControl, cursor: 'text' }}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    color: LINK,
+                    fontSize: 15,
+                    fontWeight: 500,
+                    cursor: 'text',
+                    padding: 0,
+                    width: '100%',
+                  }}
                   value={draft}
                   placeholder="? (days)"
                   disabled={busy}
                   onChange={(e) => setEffortDrafts((d) => ({ ...d, [f.name]: e.target.value }))}
                   onKeyDown={(e) => {
                     if (e.key !== 'Enter') return;
+                    e.stopPropagation();
                     const t = draft.trim();
                     const n = t === '' ? null : Number(t);
                     if (n !== null && (!Number.isFinite(n) || n < 0)) return;
@@ -543,6 +638,7 @@ export function IssueDetailsOverlay({
             return field(f.name, null, <div style={{ color: LINK, fontSize: 15, fontWeight: 500 }}>{valueText(f.value)}</div>);
           })}
         </div>
-    </div>
+      </div>
+    </>
   );
 }

@@ -77,10 +77,10 @@ export function estNarrationMs(text: string): number {
  * with ?reelIntro=1) then takes over seamlessly, and {@link closeTitleCard} fades it out.
  */
 export async function primeTitleCard(page: Page, title: string, subtitle: string): Promise<void> {
-  await page
+  const created = await page
     .evaluate(
       ([t, s]) => {
-        if (document.getElementById('__demo-titlecard')) return;
+        if (document.getElementById('__demo-titlecard')) return false;
         const el = document.createElement('div');
         el.id = '__demo-titlecard';
         el.style.cssText = [
@@ -96,10 +96,15 @@ export async function primeTitleCard(page: Page, title: string, subtitle: string
           (s as string) +
           '</div>';
         (document.body || document.documentElement).appendChild(el);
+        return true;
       },
       [title, subtitle] as const,
     )
-    .catch(() => {});
+    .catch(() => false);
+  // Hold briefly so the recorder's FIRST captured frame is the painted card, not the
+  // white pre-paint page (the QA gate samples frame 0 for the title card). Only on
+  // first paint — re-priming (e.g. spec + openProjectApp) must not add lead silence.
+  if (created === true) await page.waitForTimeout(400);
 }
 
 /** Fade out the reel's title card to reveal the app behind it. No-op off a reel. */

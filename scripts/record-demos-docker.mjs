@@ -1,6 +1,7 @@
 /**
- * record-demos-docker — record the two demo reels headed under a virtual display (Xvfb)
- * inside a Docker container, then add the voiceover on the host.
+ * record-demos-docker — record the three demo reels (install & configure, walkthrough,
+ * multiple projects) headed under a virtual display (Xvfb) inside a Docker container,
+ * then add the voiceover on the host.
  *
  * The reels MUST be recorded in Docker with a virtual display (project rule). This script:
  *   1. builds a tiny recorder image (Playwright 1.49.1 + ffmpeg),

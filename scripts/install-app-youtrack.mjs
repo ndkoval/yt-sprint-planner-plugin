@@ -47,6 +47,26 @@ await p.goto(`${B}/admin/apps`, { waitUntil: 'domcontentloaded' }); await p.wait
 await p.getByRole('button', { name: /Add app/i }).click(); await p.waitForTimeout(1000);
 const [c] = await Promise.all([p.waitForEvent('filechooser', { timeout: 9000 }), p.getByText(/Upload ZIP file/i).first().click()]);
 await c.setFiles(ZIP); await p.waitForTimeout(9000);
-const body = (await p.textContent('body')) || '';
-console.log(JSON.stringify({ ok: /sprint-capacity-planner/i.test(body) && !err, error: err || null }));
+// Import-rejection alerts don't surface as failed POSTs — capture their text too.
+const alerts = await p.locator('[class*="alert"]').allTextContents().catch(() => []);
+const alertError = alerts.find((t) => /could not import|error/i.test(t)) ?? '';
+// Verify over REST (page text is unreliable): the app must exist after the upload.
+let installed = false;
+if (TOKEN) {
+  for (let i = 0; i < 10 && !installed; i += 1) {
+    try {
+      const res = await fetch(`${B}/api/admin/apps?fields=id,name&$top=300`, {
+        headers: { Authorization: `Bearer ${TOKEN}`, Accept: 'application/json' },
+      });
+      const apps = await res.json();
+      installed = Array.isArray(apps) && apps.some((a) => a.name === 'sprint-capacity-planner');
+    } catch { /* retry */ }
+    if (!installed) await new Promise((r) => setTimeout(r, 1000));
+  }
+} else {
+  installed = /sprint-capacity-planner/i.test((await p.textContent('body')) || '');
+}
+const ok = installed && !err && !alertError;
+console.log(JSON.stringify({ ok, error: err || alertError || null }));
+if (!ok) process.exitCode = 1;
 await br.close();

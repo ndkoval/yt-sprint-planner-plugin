@@ -24,7 +24,7 @@ export const storageStatePaths = {
   manager: path.join(STORAGE, 'manager.json'),
   alice: path.join(STORAGE, 'alice.json'),
   bob: path.join(STORAGE, 'bob.json'),
-  unauthorized: path.join(STORAGE, 'unauthorized.json'),
+  eve: path.join(STORAGE, 'eve.json'),
 };
 
 export default defineConfig({

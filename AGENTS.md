@@ -29,23 +29,23 @@ Workflow modules are emitted at the ZIP root.
 | Command | What it runs | Needs a YouTrack instance? |
 | --- | --- | --- |
 | `npm run test:unit` | Domain unit tests (`tests/unit`) | no |
-| `npm run test:contract` | Backend contract tests against the fake transport (`tests/contract`) | no |
+| `npm run test:contract` | Backend contract tests against the fake `BackendEnv` (`tests/contract`) | no |
 | `npm run coverage` | Unit + contract with V8 coverage | no |
 | `npm run test:integration` | Provision → seed → run `tests/youtrack` → cleanup | **yes** (local, gated) |
-| `npm run test:e2e` | Playwright suite (`tests/e2e`) | **yes** (self-skips otherwise) |
-| `npm run test:all` | lint → typecheck:all → unit → contract → build | no |
+| `npm run test:e2e` | Playwright suite (`tests/e2e`); auto-provisions install + the two seeded projects (SCPE1/SCPE2) when `YT_TEST_BASE_URL` + an admin token are set | **yes** (self-skips otherwise) |
+| `npm run test:all` | lint → typecheck:all → unit → contract → build → test:e2e | no (the e2e step self-skips) |
 
 `npm run test:all` is the pre-PR gate. See `TESTING.md` for the full pyramid.
 
 ## Demos & reels
 
-Two reels — **install & configure** and **walkthrough** — are recorded headed under a virtual
-display (Xvfb) inside a Docker image against a **real** YouTrack, then narrated (Piper TTS, `say`
-fallback) and QA'd.
+Three reels — **install & configure**, **walkthrough** and **per-project independence** — are
+recorded headed under a virtual display (Xvfb) inside a Docker image against a **real** YouTrack,
+then narrated (Piper TTS, `say` fallback) and QA'd.
 
 ```bash
 npm run demo:reset          # wipe + seed the fixed prepared data on the real YouTrack
-npm run demo:record:docker  # record both reels headed under Xvfb in the recorder image
+npm run demo:record:docker  # record the reels headed under Xvfb in the recorder image
 npm run demo:publish        # copy the latest reels into docs/media/ (what the README links to)
 ```
 
@@ -68,8 +68,9 @@ npm run demo:publish        # copy the latest reels into docs/media/ (what the R
 - If a real YouTrack genuinely cannot be brought up in the current environment, that is a
   **blocker to surface** — not something to paper over with a stub. State the exact obstacle
   and ask how to proceed.
-- The transport-boundary `FakeYouTrack` is allowed ONLY for fast unit/contract tests of
-  backend logic. It must never be used to fake the YouTrack *UI* in demos or E2E.
+- The in-memory backend fake (`FakeEnv`, over the `BackendEnv` seam) is allowed ONLY for
+  fast unit/contract tests of backend logic. It must never be used to fake the
+  YouTrack *UI* in demos or E2E.
 
 Rationale: demos/tests must reflect the real product. Stubs misrepresent it and hide
 integration breakage.
@@ -78,7 +79,7 @@ integration breakage.
 
 - `ARCHITECTURE.md` — layering and module boundaries.
 - `DATA_MODEL.md` — persisted shapes (`scp*` extension properties) and `ProjectConfig`.
-- `WORKFLOWS.md` — the six workflow rule modules and their triggers.
+- `WORKFLOWS.md` — the availability-reminder rule (the app's only workflow).
 - `SECURITY.md` — the full permission matrix and logging policy.
 - `TESTING.md` — the test pyramid.
 - `docs/JIRA_ALIGNMENT.md` — how the model maps onto Jira's sprint concepts.

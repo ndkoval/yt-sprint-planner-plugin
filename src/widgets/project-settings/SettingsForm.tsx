@@ -9,7 +9,9 @@ import type {
   PutConfigRequest,
   UserSummary,
 } from '../../shared/api';
-import type { Participant, ProjectConfig } from '../../shared/types';
+import type { Participant, ProjectConfig, Team } from '../../shared/types';
+import { DEFAULT_TEAM_ID, MAX_TEAMS } from '../../shared/types';
+import { newTeamId } from '../../domain/index';
 import { ApiClient, ApiClientError } from '../api-client';
 import { LoadingState } from '../components/LoadingState';
 import { ErrorState } from '../components/ErrorState';
@@ -26,20 +28,21 @@ export interface SettingsFormProps {
   onClose?: () => void;
 }
 
-function defaultConfig(): ProjectConfig {
+/** A fresh config. The backlog default is scoped to the project once its key is known. */
+function defaultConfig(projectKey: string | null): ProjectConfig {
   return {
-    version: 2,
+    version: 3,
     boardId: '',
     originalEffortField: 'Original Effort',
     currentEffortField: 'Current Effort',
     hoursPerDay: 8,
     sprintLengthDays: 14,
     datePolicy: 'continuous',
-    nameTemplate: 'AppGlass {year}-S{sequence}',
-    backlogQuery: '#Unresolved',
+    nameTemplate: 'Sprint {sequence}',
+    backlogQuery: projectKey !== null ? `project: ${projectKey} #Unresolved` : '#Unresolved',
     // How fast the Focus Factor learns from finished Sprints (see the explanation below).
     learningRate: 0.3,
-    participants: [],
+    teams: [{ id: DEFAULT_TEAM_ID, name: 'Team 1', participants: [] }],
   };
 }
 
@@ -71,16 +74,45 @@ function validate(config: ProjectConfig): Problem[] {
   if (!(config.learningRate > 0 && config.learningRate <= 1)) {
     problems.push({ path: 'learningRate', message: 'Learning rate must be between 0 and 1.' });
   }
-  config.participants.forEach((p, i) => {
-    if (p.userId.trim().length === 0) {
-      problems.push({ path: `participants[${i}].userId`, message: 'Participant id is required.' });
+  if (
+    config.reminderLeadDays !== undefined &&
+    !(Number.isInteger(config.reminderLeadDays) && config.reminderLeadDays >= 0 && config.reminderLeadDays <= 30)
+  ) {
+    problems.push({
+      path: 'reminderLeadDays',
+      message: 'Reminder lead must be a whole number of days between 0 and 30.',
+    });
+  }
+  if (config.teams.length === 0) {
+    problems.push({ path: 'teams', message: 'At least one team is required.' });
+  }
+  if (config.teams.length > MAX_TEAMS) {
+    problems.push({ path: 'teams', message: `At most ${MAX_TEAMS} teams are supported.` });
+  }
+  const names = new Set<string>();
+  config.teams.forEach((team, t) => {
+    if (team.name.trim().length === 0) {
+      problems.push({ path: `teams[${t}].name`, message: 'Team name is required.' });
+    } else if (names.has(team.name.trim().toLowerCase())) {
+      problems.push({ path: `teams[${t}].name`, message: `Duplicate team name "${team.name}".` });
     }
-    if (!(p.allocation > 0 && p.allocation <= 1)) {
-      problems.push({
-        path: `participants[${i}].allocation`,
-        message: 'Allocation must be between 1% and 100%.',
-      });
-    }
+    names.add(team.name.trim().toLowerCase());
+    // The same person MAY be in several teams (shared specialist); only duplicates
+    // within one team are invalid (addParticipant already prevents those).
+    team.participants.forEach((p, i) => {
+      if (p.userId.trim().length === 0) {
+        problems.push({
+          path: `teams[${t}].participants[${i}].userId`,
+          message: 'Participant id is required.',
+        });
+      }
+      if (!(p.allocation > 0 && p.allocation <= 1)) {
+        problems.push({
+          path: `teams[${t}].participants[${i}].allocation`,
+          message: 'Allocation must be between 1% and 100%.',
+        });
+      }
+    });
   });
   return problems;
 }
@@ -127,6 +159,7 @@ const helpTextStyle: React.CSSProperties = {
 interface FieldOption {
   key: string;
   label: string;
+  disabled?: boolean;
 }
 
 /** §7 project settings form for the Sprint Capacity Planner. */
@@ -137,7 +170,8 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
   const [isManager, setIsManager] = useState(false);
   const [boards, setBoards] = useState<BoardSummary[]>([]);
   const [projectFields, setProjectFields] = useState<ProjectFieldSummary[]>([]);
-  const [config, setConfig] = useState<ProjectConfig>(defaultConfig);
+  const [projectKey, setProjectKey] = useState<string | null>(null);
+  const [config, setConfig] = useState<ProjectConfig>(() => defaultConfig(null));
   const [revision, setRevision] = useState(0);
 
   // User directory for the participant picker + a name lookup for existing rows.
@@ -172,19 +206,21 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
     setStatus('loading');
     setLoadError(null);
     try {
-      const [configResponse, boardList, fieldList, directory] = await Promise.all([
+      const [configResponse, boardList, fieldList, directory, key] = await Promise.all([
         client.getConfig(),
         client.getBoards(),
         client.getProjectFields().catch(() => [] as ProjectFieldSummary[]),
         client.searchUsers('').catch(() => [] as UserSummary[]),
+        client.projectKey().catch(() => null),
       ]);
       setIsManager(configResponse.isManager);
       setBoards(boardList);
       setProjectFields(fieldList);
       setUserOptions(directory);
       rememberNames(directory);
+      setProjectKey(key);
       setRevision(configResponse.configRevision);
-      setConfig(configResponse.config ?? defaultConfig());
+      setConfig(configResponse.config ?? defaultConfig(key));
       setStatus('ready');
     } catch (err) {
       setLoadError(err);
@@ -216,34 +252,81 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
     setConfig((prev) => ({ ...prev, [key]: value }));
   }, []);
 
+  const updateTeam = useCallback((index: number, patch: Partial<Team>): void => {
+    setSaved(false);
+    setConfig((prev) => ({
+      ...prev,
+      teams: prev.teams.map((t, i) => (i === index ? { ...t, ...patch } : t)),
+    }));
+  }, []);
+
+  const addTeam = useCallback((): void => {
+    setSaved(false);
+    setConfig((prev) => {
+      if (prev.teams.length >= MAX_TEAMS) return prev;
+      const id = newTeamId(prev.teams.map((t) => t.id));
+      const n = prev.teams.length + 1;
+      let name = `Team ${n}`;
+      const used = new Set(prev.teams.map((t) => t.name.trim().toLowerCase()));
+      let suffix = n;
+      while (used.has(name.toLowerCase())) name = `Team ${(suffix += 1)}`;
+      return { ...prev, teams: [...prev.teams, { id, name, participants: [] }] };
+    });
+  }, []);
+
+  const removeTeam = useCallback((index: number): void => {
+    setSaved(false);
+    setConfig((prev) =>
+      prev.teams.length <= 1
+        ? prev
+        : { ...prev, teams: prev.teams.filter((_t, i) => i !== index) },
+    );
+  }, []);
+
   const updateParticipant = useCallback(
-    (index: number, patch: Partial<Participant>): void => {
+    (teamIndex: number, index: number, patch: Partial<Participant>): void => {
       setSaved(false);
       setConfig((prev) => ({
         ...prev,
-        participants: prev.participants.map((p, i) => (i === index ? { ...p, ...patch } : p)),
+        teams: prev.teams.map((t, ti) =>
+          ti === teamIndex
+            ? { ...t, participants: t.participants.map((p, i) => (i === index ? { ...p, ...patch } : p)) }
+            : t,
+        ),
       }));
     },
     [],
   );
 
-  const removeParticipant = useCallback((index: number): void => {
+  const removeParticipant = useCallback((teamIndex: number, index: number): void => {
     setSaved(false);
     setConfig((prev) => ({
       ...prev,
-      participants: prev.participants.filter((_p, i) => i !== index),
+      teams: prev.teams.map((t, ti) =>
+        ti === teamIndex ? { ...t, participants: t.participants.filter((_p, i) => i !== index) } : t,
+      ),
     }));
   }, []);
 
   const addParticipant = useCallback(
-    (user: UserSummary): void => {
+    (teamIndex: number, user: UserSummary): void => {
       setSaved(false);
       rememberNames([user]);
       setConfig((prev) => {
-        if (prev.participants.some((p) => p.userId === user.login)) return prev;
+        // Shared specialists may join several teams — only reject a duplicate
+        // within the SAME team.
+        const team = prev.teams[teamIndex];
+        if (!team || team.participants.some((p) => p.userId === user.login)) return prev;
         return {
           ...prev,
-          participants: [...prev.participants, { userId: user.login, enabled: true, allocation: 1 }],
+          teams: prev.teams.map((t, ti) =>
+            ti === teamIndex
+              ? {
+                  ...t,
+                  participants: [...t.participants, { userId: user.login, enabled: true, allocation: 1 }],
+                }
+              : t,
+          ),
         };
       });
     },
@@ -305,7 +388,13 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
     );
   }
 
-  const boardData: FieldOption[] = boards.map((b) => ({ key: b.id, label: b.name }));
+  // Boards are pre-filtered to this project; boards with sprints disabled stay
+  // visible (so the manager understands why they can't be used) but not selectable.
+  const boardData: FieldOption[] = boards.map((b) => ({
+    key: b.id,
+    label: b.usesSprints ? b.name : `${b.name} · sprints disabled on this board`,
+    disabled: !b.usesSprints,
+  }));
   const selectedBoard = boardData.find((b) => b.key === config.boardId) ?? null;
 
   // Effort-field options from the project's custom fields. Period fields come first (the
@@ -329,15 +418,145 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
   const curFieldOptions = fieldOptionsFor(config.currentEffortField);
 
   const nameFor = (userId: string): string => namesById[userId] ?? userId;
+  const multiTeam = config.teams.length > 1;
+  const keyExample = projectKey ?? 'KEY';
 
-  // Participant picker: users not already on the team.
-  const participantIds = new Set(config.participants.map((p) => p.userId));
-  const addOptions = userOptions
-    .filter((u) => !participantIds.has(u.login))
-    .map((u) => ({ key: u.login, label: `${u.name || u.login} (${u.login})`, model: u }));
+  // The other teams a login already belongs to (shown as a hint — shared specialists
+  // may join several teams; only same-team duplicates are blocked).
+  const teamsOfLogin = new Map<string, string[]>();
+  for (const team of config.teams) {
+    for (const p of team.participants) {
+      teamsOfLogin.set(p.userId, [...(teamsOfLogin.get(p.userId) ?? []), team.name]);
+    }
+  }
+
+  const participantsTable = (team: Team, teamIndex: number): React.JSX.Element => (
+    <>
+      <table
+        style={{ width: '100%', borderCollapse: 'collapse' }}
+        aria-label={multiTeam ? `Members of ${team.name}` : 'Team participants'}
+      >
+        <thead>
+          <tr>
+            <th style={cellStyle} scope="col">
+              Member
+            </th>
+            <th style={cellStyle} scope="col">
+              Allocation
+            </th>
+            <th style={cellStyle} scope="col">
+              Enabled
+            </th>
+            <th style={cellStyle} scope="col">
+              Note
+            </th>
+            <th style={cellStyle} scope="col">
+              <span style={{ position: 'absolute', left: -10000 }}>Remove</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {team.participants.length === 0 ? (
+            <tr>
+              <td style={{ ...cellStyle, color: 'var(--ring-secondary-color)' }} colSpan={5}>
+                No team members yet — add people with the picker below.
+              </td>
+            </tr>
+          ) : (
+            team.participants.map((p, index) => (
+              <tr key={p.userId}>
+                <td style={cellStyle}>
+                  <div>{nameFor(p.userId)}</div>
+                  <div style={helpTextStyle}>{p.userId}</div>
+                </td>
+                <td style={cellStyle}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Input
+                      aria-label={`Allocation for ${nameFor(p.userId)} (percent)`}
+                      type="number"
+                      min={1}
+                      max={100}
+                      step={5}
+                      size={InputSize.S}
+                      value={String(Math.round((p.allocation ?? 1) * 100))}
+                      error={problemFor(`teams[${teamIndex}].participants[${index}].allocation`)}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                        const pct = Number(e.target.value);
+                        updateParticipant(teamIndex, index, {
+                          allocation: Number.isFinite(pct) ? pct / 100 : p.allocation,
+                        });
+                      }}
+                    />
+                    <span aria-hidden>%</span>
+                  </div>
+                </td>
+                <td style={cellStyle}>
+                  <Checkbox
+                    aria-label={`${nameFor(p.userId)} enabled`}
+                    checked={p.enabled}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      updateParticipant(teamIndex, index, { enabled: e.target.checked })
+                    }
+                  />
+                </td>
+                <td style={cellStyle}>
+                  <Input
+                    aria-label={`Note for ${nameFor(p.userId)}`}
+                    size={InputSize.M}
+                    value={p.note ?? ''}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      updateParticipant(teamIndex, index, { note: e.target.value })
+                    }
+                  />
+                </td>
+                <td style={cellStyle}>
+                  <Button inline onClick={() => removeParticipant(teamIndex, index)}>
+                    Remove
+                  </Button>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+      <div style={{ marginTop: 'calc(var(--ring-unit) * 2)', maxWidth: 360 }}>
+        {/* key: remount after every roster change so the picker never keeps the
+            previous selection/filter text (confusing "sticky choice" UX). */}
+        <Select
+          key={`${team.id}-${team.participants.length}`}
+          data={userOptions.map((u) => {
+            const elsewhere = (teamsOfLogin.get(u.login) ?? []).filter((n) => n !== team.name);
+            const inThisTeam = team.participants.some((p) => p.userId === u.login);
+            return {
+              key: u.login,
+              label: inThisTeam
+                ? `${u.name || u.login} (${u.login}) · already in this team`
+                : elsewhere.length > 0
+                  ? `${u.name || u.login} (${u.login}) · also in ${elsewhere.join(', ')}`
+                  : `${u.name || u.login} (${u.login})`,
+              disabled: inThisTeam,
+              model: u,
+            };
+          })}
+          selected={null}
+          label="Add a team member…"
+          filter
+          loading={userSearching}
+          onFilter={(q: string) => searchUsers(q)}
+          onSelect={(item) => {
+            const model = (item as { model?: UserSummary } | null)?.model;
+            if (model) addParticipant(teamIndex, model);
+          }}
+        />
+      </div>
+    </>
+  );
 
   return (
-    <div style={{ padding: 'calc(var(--ring-unit) * 2)', font: 'var(--ring-font)', maxWidth: 880 }}>
+    <div
+      data-test="scp-settings"
+      style={{ padding: 'calc(var(--ring-unit) * 2)', font: 'var(--ring-font)', maxWidth: 880 }}
+    >
       <div
         style={{
           display: 'flex',
@@ -453,6 +672,27 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
               }
             />
           </div>
+          <div style={fieldBox}>
+            <Input
+              label="Availability reminder lead (days)"
+              type="number"
+              min={0}
+              max={30}
+              step={1}
+              size={InputSize.M}
+              value={config.reminderLeadDays === undefined ? '' : String(config.reminderLeadDays)}
+              placeholder="App default (3 unless changed)"
+              error={problemFor('reminderLeadDays')}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                const raw = e.target.value.trim();
+                update('reminderLeadDays', raw === '' ? undefined : Number(raw));
+              }}
+            />
+            <p style={{ ...helpTextStyle, margin: '4px 0 0' }}>
+              Days before a Sprint starts to remind participants who kept the default
+              availability. 0 turns reminders off for this project; empty uses the app default.
+            </p>
+          </div>
         </div>
         <Input
           label="Naming template (placeholders: {year} {sequence} {startDate} {finishDate})"
@@ -471,13 +711,14 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
           A YouTrack search that defines the backlog you plan from — the pool of issues you can
           drag into a Sprint on the planning board. Issues already in the Sprint are excluded
           automatically. Leave empty to hide the backlog lane. Example:{' '}
-          <code>project: AGP State: Open</code>.
+          <code>project: {keyExample} State: Open</code>.
+          {multiTeam ? ' Teams can override this query below.' : ''}
         </p>
         <Input
           label="Backlog search query"
           size={InputSize.L}
           value={config.backlogQuery}
-          placeholder="#Unresolved"
+          placeholder={`project: ${keyExample} #Unresolved`}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
             update('backlogQuery', e.target.value)
           }
@@ -510,8 +751,11 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
           </p>
           <p style={{ margin: 0 }}>
             <strong>Learning rate</strong> is how quickly it adapts: <em>0.1</em> reacts slowly and
-            stays stable across noisy Sprints; <em>0.5</em> tracks the latest Sprint closely. A
-            manager can always override the factor on any individual Sprint.
+            stays stable across noisy Sprints; <em>0.5</em> tracks the latest Sprint closely.
+            {multiTeam
+              ? ' Each team calibrates independently from its own Sprints; the learning rate is shared.'
+              : ''}{' '}
+            A manager can always override the factor on any individual Sprint.
           </p>
         </div>
         <div style={fieldBox}>
@@ -531,120 +775,100 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
         </div>
       </section>
 
-      <section style={sectionStyle}>
-        <h2 style={sectionTitleStyle}>Team</h2>
-        <p style={{ ...helpTextStyle, marginTop: 0 }}>
-          Add the people you plan capacity for. Everyone is full-time by default; set a lower
-          allocation for part-time members and their capacity scales down to match.
-        </p>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }} aria-label="Team participants">
-          <thead>
-            <tr>
-              <th style={cellStyle} scope="col">
-                Member
-              </th>
-              <th style={cellStyle} scope="col">
-                Allocation
-              </th>
-              <th style={cellStyle} scope="col">
-                Enabled
-              </th>
-              <th style={cellStyle} scope="col">
-                Note
-              </th>
-              <th style={cellStyle} scope="col">
-                <span style={{ position: 'absolute', left: -10000 }}>Remove</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {config.participants.length === 0 ? (
-              <tr>
-                <td style={{ ...cellStyle, color: 'var(--ring-secondary-color)' }} colSpan={5}>
-                  No team members yet — add people with the picker below.
-                </td>
-              </tr>
-            ) : (
-              config.participants.map((p, index) => (
-                <tr key={p.userId}>
-                  <td style={cellStyle}>
-                    <div>{nameFor(p.userId)}</div>
-                    <div style={helpTextStyle}>{p.userId}</div>
-                  </td>
-                  <td style={cellStyle}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <Input
-                        aria-label={`Allocation for ${nameFor(p.userId)} (percent)`}
-                        type="number"
-                        min={1}
-                        max={100}
-                        step={5}
-                        size={InputSize.S}
-                        value={String(Math.round((p.allocation ?? 1) * 100))}
-                        error={problemFor(`participants[${index}].allocation`)}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                          const pct = Number(e.target.value);
-                          updateParticipant(index, {
-                            allocation: Number.isFinite(pct) ? pct / 100 : p.allocation,
-                          });
-                        }}
-                      />
-                      <span aria-hidden>%</span>
-                    </div>
-                  </td>
-                  <td style={cellStyle}>
-                    <Checkbox
-                      aria-label={`${nameFor(p.userId)} enabled`}
-                      checked={p.enabled}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                        updateParticipant(index, { enabled: e.target.checked })
-                      }
-                    />
-                  </td>
-                  <td style={cellStyle}>
-                    <Input
-                      aria-label={`Note for ${nameFor(p.userId)}`}
-                      size={InputSize.M}
-                      value={p.note ?? ''}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                        updateParticipant(index, { note: e.target.value })
-                      }
-                    />
-                  </td>
-                  <td style={cellStyle}>
-                    <Button inline onClick={() => removeParticipant(index)}>
-                      Remove
-                    </Button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-        <div style={{ marginTop: 'calc(var(--ring-unit) * 2)', maxWidth: 360 }}>
-          <Select
-            data={addOptions}
-            selected={null}
-            label="Add a team member…"
-            filter
-            loading={userSearching}
-            onFilter={(q: string) => searchUsers(q)}
-            onSelect={(item) => {
-              const model = (item as { model?: UserSummary } | null)?.model;
-              if (model) addParticipant(model);
-            }}
-          />
-        </div>
-      </section>
+      {multiTeam ? (
+        // Several small teams planning independently inside shared Sprints: each gets a
+        // named card with its own members and an optional backlog override.
+        <section style={sectionStyle} data-test="scp-teams">
+          <h2 style={sectionTitleStyle}>Teams</h2>
+          <p style={{ ...helpTextStyle, marginTop: 0 }}>
+            All teams share the project&rsquo;s board and Sprint cadence; each team plans its own
+            capacity, focus factor and backlog. A person can be in only one team — someone shared
+            between squads joins one team with a lower allocation. Teams that need their own board
+            or a different Sprint length belong in separate projects.
+          </p>
+          {problemFor('teams') !== null ? (
+            <p role="alert" style={{ color: 'var(--ring-error-color)', font: 'var(--ring-font-smaller)' }}>
+              {problemFor('teams')}
+            </p>
+          ) : null}
+          {config.teams.map((team, teamIndex) => (
+            <div
+              key={team.id}
+              data-test="scp-team-card"
+              data-team={team.id}
+              style={{
+                border: '1px solid var(--ring-line-color)',
+                borderRadius: 'var(--ring-border-radius)',
+                padding: 'calc(var(--ring-unit) * 2)',
+                marginBottom: 'calc(var(--ring-unit) * 2)',
+              }}
+            >
+              <div style={{ display: 'flex', gap: 'calc(var(--ring-unit) * 2)', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 'calc(var(--ring-unit))' }}>
+                <Input
+                  label="Team name"
+                  size={InputSize.M}
+                  value={team.name}
+                  error={problemFor(`teams[${teamIndex}].name`)}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    updateTeam(teamIndex, { name: e.target.value })
+                  }
+                />
+                <div style={{ flex: 1 }} />
+                <Button onClick={() => removeTeam(teamIndex)} title="Remove this team (Sprint history is kept)">
+                  Remove team
+                </Button>
+              </div>
+              <Input
+                label="Backlog query override — leave empty to use the project backlog"
+                size={InputSize.L}
+                value={team.backlogQuery ?? ''}
+                placeholder={`project: ${keyExample} Subsystem: {value} #Unresolved`}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  updateTeam(teamIndex, {
+                    backlogQuery: e.target.value.length > 0 ? e.target.value : undefined,
+                  })
+                }
+              />
+              <div style={{ marginTop: 'calc(var(--ring-unit) * 2)' }}>
+                {participantsTable(team, teamIndex)}
+              </div>
+            </div>
+          ))}
+          <Button data-test="scp-add-team" onClick={addTeam} disabled={config.teams.length >= MAX_TEAMS}>
+            Add team
+          </Button>
+        </section>
+      ) : (
+        // Single team: exactly the familiar flat section — no cards, no name field, no
+        // per-team backlog. "Add another team" quietly unlocks the multi-team layout.
+        <section style={sectionStyle} data-test="scp-teams">
+          <h2 style={sectionTitleStyle}>Team</h2>
+          <p style={{ ...helpTextStyle, marginTop: 0 }}>
+            Add the people you plan capacity for. Everyone is full-time by default; set a lower
+            allocation for part-time members and their capacity scales down to match.
+          </p>
+          {config.teams[0] !== undefined ? participantsTable(config.teams[0], 0) : null}
+          <div style={{ marginTop: 'calc(var(--ring-unit) * 2)' }}>
+            <Button data-test="scp-add-team" onClick={addTeam}>
+              Add another team
+            </Button>
+            <p style={{ ...helpTextStyle, margin: '4px 0 0' }}>
+              For big projects: split planning into small teams, each with its own members,
+              focus factor and backlog filter, inside the same Sprints.
+            </p>
+          </div>
+        </section>
+      )}
 
       <section style={sectionStyle}>
         <h2 style={sectionTitleStyle}>Managers</h2>
         <p style={{ color: 'var(--ring-secondary-color)', margin: 0 }}>
-          {/* KNOWN LIMITATION: the Capacity-Managers group is set via configuration/provisioning
-              (config.managersGroup); a dedicated group picker in this form is not yet built. */}
-          Managers are the project members with configuration permission. They can edit all
-          capacity rows, assign issues and Sprint details; other participants may edit only their
-          own row.
+          {/* No app-specific permission scheme: the backend checks YouTrack's own
+              UPDATE_PROJECT permission (plus the project leader) on every mutation. */}
+          Whoever can change this project&rsquo;s settings in YouTrack manages its planning:
+          they configure teams{multiTeam ? '' : ' (and can split the project into several)'},
+          edit all capacity rows, assign issues and plan Sprints. Everyone else on a team may
+          edit only their own availability.
         </p>
       </section>
 

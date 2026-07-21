@@ -1,26 +1,25 @@
 # Testing
 
-The suite is a pyramid: many fast, hermetic tests at the base; a small number of instance and browser tests at the top that self-skip without an instance. All commands come from [`package.json`](package.json).
+The suite is a pyramid: many fast, hermetic tests at the base; a small number of instance and browser tests at the top that self-skip without an instance. All commands come from [`package.json`](package.json). Project rule: **tests and demos that touch YouTrack use a REAL YouTrack** — the only fake is the `BackendEnv` seam in contract tests, which never stands in for YouTrack UI (see [`AGENTS.md`](AGENTS.md)).
 
 | Layer | Location | Command | Needs a YouTrack instance? |
 | --- | --- | --- | --- |
 | Unit | `tests/unit` | `npm run test:unit` | no |
 | Contract | `tests/contract` | `npm run test:contract` | no |
 | Coverage (unit+contract) | — | `npm run coverage` | no |
-| Real-YouTrack integration | `tests/youtrack` | `npm run test:integration` | **yes** (local, gated) |
-| E2E (Playwright) | `tests/e2e` | `npm run test:e2e` | **yes** (self-skips) |
-| UI-artifact analysis | — | `npm run test:e2e:analyze` | no |
-| Full fast lane | — | `npm run test:all` | no |
+| E2E (Playwright) | `tests/e2e` | `npm run test:e2e` | **yes** (self-skips otherwise) |
+| Integration | `tests/youtrack` | `npm run test:integration` | **yes** (local, gated) |
+| Demo reels | `tests/e2e/demo` | `npm run demo:record:docker` | **yes** (Docker + host instance) |
 
-`npm run test:all` = `lint → typecheck:all → test:unit → test:contract → build`.
+`npm run test:all` (the pre-PR gate, also `npm test`) = `lint → typecheck:all → test:unit → test:contract → build → test:e2e`. Without `YT_TEST_BASE_URL` the e2e step reports all-skipped, not failed, so the gate runs anywhere.
 
 ---
 
 ## Unit tests (`tests/unit`)
 
-Pure domain-library tests: [`capacity`](tests/unit/capacity.test.ts), [`effort`](tests/unit/effort.test.ts), [`focus-factor`](tests/unit/focus-factor.test.ts), [`dates`](tests/unit/dates.test.ts), [`naming`](tests/unit/naming.test.ts), [`permissions`](tests/unit/permissions.test.ts), [`migrations`](tests/unit/migrations.test.ts), [`schemas`](tests/unit/schemas.test.ts), [`units`](tests/unit/units.test.ts), plus a barrel export check.
+Pure tests of the domain library, shared schemas, the view assembly and the workflow rule: `capacity`, `dates`, `effort`, `focus-factor`, `metrics`, `migrations`, `naming`, `permissions`, `schemas`, `teams`, `units`, `sprint-view` (compute-on-read assembly), `workflow-reminder` (the rule's `_internals` driven with a stubbed scripting API — both v2 and v3 documents), plus a barrel export check.
 
-Coverage is enforced by [`vitest.config.ts`](vitest.config.ts): `src/domain/**` must hold **≥ 95% statements/functions/lines, ≥ 90% branches** (the correctness-critical core; effectively 100% domain coverage). Reports land in `artifacts/coverage/`.
+Coverage is enforced by [`vitest.config.ts`](vitest.config.ts): `src/domain/**` must hold **≥ 95% statements/functions/lines, ≥ 90% branches**. Reports land in `artifacts/coverage/`.
 
 ```bash
 npm run test:unit
@@ -31,7 +30,7 @@ npm run coverage      # unit + contract with V8 coverage
 
 ## Contract tests (`tests/contract`)
 
-Exercise the whole backend (router, services, repositories, reconciliation) against the **in-memory fake transport** [`fake-youtrack.ts`](tests/contract/fake-youtrack.ts) — the *only* thing mocked is the `YouTrackClient` boundary. Extension properties round-trip through a per-entity store, so persistence, revisions, and reconciliation are observable, and the fake can inject faults. Suites: capacity, config, sprints, focus-factor, metrics-reconciliation, diagnostics-export-import, and errors.
+Exercise the backend handlers **for real** against the in-memory [`FakeEnv`](tests/contract/fake-env.ts) — only the `BackendEnv` boundary ([`src/backend/env.ts`](src/backend/env.ts): project entity, extension properties, user directory, clock) is faked, and properties round-trip through a plain map so persistence is observable. Native data (sprints, issues) is deliberately **not** modelled: the backend never touches it. Suites: `capacity`, `config`, `sprint-register`, `focus-calibration`, `export-import-diagnostics` (including v2-bundle import), `storage` (migrate-on-read, v1/garbage handling).
 
 ```bash
 npm run test:contract
@@ -39,136 +38,61 @@ npm run test:contract
 
 ---
 
-## Real-YouTrack integration (`tests/youtrack`)
-
-Drives the live REST API of a **local, disposable** YouTrack Server — **no Docker**. The orchestrator [`run-integration.mjs`](scripts/run-integration.mjs) runs *provision → seed → vitest → cleanup* (cleanup always runs in `finally`). The vitest suite [`integration.test.ts`](tests/youtrack/integration.test.ts) self-skips when `YT_TEST_BASE_URL` is unset.
-
-**Harness scripts** ([`scripts/`](scripts/), shared guards in [`lib/yt-env.mjs`](scripts/lib/yt-env.mjs)):
-
-| Script | npm command | Role |
-| --- | --- | --- |
-| `provision-youtrack.mjs` | `provision:youtrack` | Download a **pinned** YouTrack Server ZIP, unpack, launch `bin/youtrack.sh` on a local port, poll readiness, write `artifacts/test-environment-manifest.json`. |
-| `seed-youtrack.mjs` | `seed:youtrack` | Create an isolated project/board/fields/users via REST, namespaced by run id. |
-| `cleanup-youtrack.mjs` | `cleanup:youtrack` | Delete seeded entities, stop the process, remove temp dirs; writes `artifacts/orphan-cleanup-report.json`. |
-
-**Environment variables** (copy [`.env.example`](.env.example) → `.env`, git-ignored):
-
-| Var | Purpose |
-| --- | --- |
-| `YT_TEST_BASE_URL` | Local instance URL. **Unset ⇒ every integration/E2E test self-skips.** |
-| `YT_TEST_ADMIN_TOKEN` | Permanent admin token for REST bootstrap. |
-| `YT_TEST_MANAGER_/ALICE_/BOB_LOGIN`/`_PASSWORD` | Persona credentials. |
-| `YT_TEST_PROJECT_PREFIX` | Isolation prefix; seeded project = `<PREFIX>_<runId>`. |
-| `YT_TEST_ALLOW_DESTRUCTIVE` | **Must be exactly `true`** to allow provision/seed/cleanup. |
-| `YT_TEST_PORT`, `YT_TEST_READY_TIMEOUT_MS`, `YT_TEST_MIN_VIDEO_SEC` | Optional tuning. |
-| `YT_TEST_ALLOW_NONLOCAL` | Undocumented escape hatch for disposable CI only. |
-
-**Safety gates** (`lib/yt-env.mjs`):
-
-- **Destructive gate** — `assertDestructiveAllowed` refuses to run unless `YT_TEST_ALLOW_DESTRUCTIVE=true`.
-- **Production block** — `assertNotProduction` accepts only `localhost` / `127.0.0.1` / `[::1]` / `*.local`, and always blocks `*.youtrack.cloud` / `*.jetbrains.*`.
-- **Isolation naming** — `makeRunId()` produces a sortable timestamp + random suffix so parallel runs never collide; tests clean up their own project/board in `afterAll`.
-
-```bash
-cp .env.example .env    # fill in a LOCAL instance + YT_TEST_ALLOW_DESTRUCTIVE=true
-npm run test:integration
-```
-
-> Several endpoints here (extension-property read/write, app install, group membership) are `// SPIKE` and mirror the SPIKEs in [`youtrack-http-client.ts`](src/backend/repositories/youtrack-http-client.ts).
-
----
-
 ## Playwright E2E (`tests/e2e`)
 
-Config: [`playwright.config.ts`](playwright.config.ts). `baseURL` = `YT_TEST_BASE_URL`; the whole suite (and each spec) **self-skips when it is unset**, so a run without an instance reports all-skipped, not failed. Run via [`run-e2e.mjs`](scripts/run-e2e.mjs) (ensures artifact dirs exist first).
+Runs against a **real YouTrack** with the app installed. Entry point: [`scripts/run-e2e.mjs`](scripts/run-e2e.mjs).
 
-**Personas** ([`fixtures/personas.ts`](tests/e2e/fixtures/personas.ts)): `manager`, `alice`, `bob`, `unauthorized` — each with its own storage-state file materialised by the `setup` project ([`auth.setup.ts`](tests/e2e/auth.setup.ts)).
+**Auto-provisioning.** When `YT_TEST_BASE_URL` **and** an admin token (`YT_TEST_ADMIN_TOKEN` or `/tmp/yt25-token.txt`) are present, the runner makes the instance e2e-ready first: build → pack → clean-install the app (UI automation, [`install-app-youtrack.mjs`](scripts/install-app-youtrack.mjs)) → seed the two e2e projects ([`seed-e2e.mjs`](scripts/seed-e2e.mjs)) → attach the app to both → add team members. Skip with `E2E_SKIP_PROVISION=1` (fast re-runs) or `E2E_SKIP_BUILD=1` (reuse `dist/`). Without `YT_TEST_BASE_URL` every spec self-skips ([`playwright.config.ts`](playwright.config.ts)).
 
-**Critical vs regression** journeys map to Playwright projects:
+**Seeded fixtures** (deterministic, [`scripts/seed-e2e.mjs`](scripts/seed-e2e.mjs) → `artifacts/e2e-env.json`): two app-configured projects, because per-project independence needs a pair —
 
-| Project | Spec pattern | Capture policy (§28) |
-| --- | --- | --- |
-| `critical` | `*.critical.spec.ts` (lifecycle, configuration, availability, permissions) | `video: 'on'`, `trace: 'on'`, `screenshot: 'on'` — **always** |
-| `regression` | `*.regression.spec.ts` (scope-changes) | `video`/`trace` `retain-on-failure`, `screenshot: 'only-on-failure'` |
+- **`SCPE1`** ("Capacity One"): **two teams** — Alpha (admin + alice) and Beta (bob at 50%) — 14-day Sprints, 8h days; the multi-team scenarios.
+- **`SCPE2`** ("Capacity Two"): **one team** (admin + bob) — 7-day Sprints, 6h days, its own board/template; the single-team baseline and independence counterpart.
 
-Reports: HTML + JSON → `artifacts/playwright-report/`; traces/videos/screenshots → `artifacts/test-results/`.
+Seeded boards are created with **project-based sharing** (`ensureBoard` in [`scripts/lib/seed-lib.mjs`](scripts/lib/seed-lib.mjs)) — REST-created boards default to owner-only, which would 403 the member personas' planner reads.
 
-**Accessibility (§27):** [`fixtures/axe.ts`](tests/e2e/fixtures/axe.ts) runs `@axe-core/playwright` with `wcag2a`/`wcag2aa`; **serious/critical** violations fail the test, minor/moderate are logged as warnings, and the full axe report is attached.
+**Personas** ([`fixtures/personas.ts`](tests/e2e/fixtures/personas.ts), storage states materialised by [`auth.setup.ts`](tests/e2e/auth.setup.ts)): `manager` (admin, project leader of both = manager), `alice` (One/Alpha member), `bob` (One/Beta + Two member), `eve` (authenticated, **no** project role).
+
+**Capture policy** ([`playwright.config.ts`](playwright.config.ts)): `*.critical.spec.ts` record video/trace/screenshot always; `*.regression.spec.ts` retain on failure only. Reports → `artifacts/playwright-report/`; traces/videos → `artifacts/test-results/`. The [`axe fixture`](tests/e2e/fixtures/axe.ts) fails a test on serious/critical WCAG 2 A/AA violations. Specs verify backend state over REST with the admin token ([`fixtures/rest.ts`](tests/e2e/fixtures/rest.ts)) when it is available.
 
 ```bash
 npm run test:e2e
-npm run test:e2e -- --project=setup --project=critical      # subset
+npm run test:e2e -- --project=critical        # forward args to Playwright
 ```
-
-> The specs currently use placeholder selectors pending a live UI (a `// SPIKE` — see [`CHANGELOG.md`](CHANGELOG.md)).
 
 ---
 
-## Video/trace/contact-sheet analysis (§28–29)
+## Integration (`tests/youtrack`)
 
-[`analyze-ui-artifacts.mjs`](scripts/analyze-ui-artifacts.mjs) (`npm run test:e2e:analyze`):
+Drives the live REST API of a **local, disposable** YouTrack. The orchestrator [`run-integration.mjs`](scripts/run-integration.mjs) runs *provision → seed → vitest `tests/youtrack` → cleanup* (cleanup always runs in `finally`); provisioning is skipped when `YT_TEST_BASE_URL` + `YT_TEST_ADMIN_TOKEN` already point at an instance. The suite itself self-skips when `YT_TEST_BASE_URL` is unset.
 
-- reads the Playwright JSON report (`artifacts/playwright-report/report.json`);
-- finds videos under `artifacts/test-results/**` and `artifacts/videos/**`;
-- uses **ffprobe** for per-video metadata and **ffmpeg** for integrity: exists, decodes, `duration ≥ YT_TEST_MIN_VIDEO_SEC` (default 1s), resolution present, **not all-black / all-white** (luma thresholds 16 / 239);
-- builds `4×4` **contact sheets** into `artifacts/contact-sheets/`;
-- writes [`tests/video-analysis/video-integrity.json`](tests/video-analysis/video-integrity.json) and `artifacts/ui-analysis.md`.
-
-It degrades gracefully when ffprobe/ffmpeg or the report are missing (marks checks *skipped*) and exits non-zero **only** on real integrity failures (exists but won't decode / too short / entirely black or white).
+**Safety gates** ([`scripts/lib/yt-env.mjs`](scripts/lib/yt-env.mjs)): `YT_TEST_ALLOW_DESTRUCTIVE` must equal `true`; production-looking base URLs are hard-blocked (only `localhost`/`127.0.0.1`/`[::1]`/`*.local`; `*.youtrack.cloud` and `*.jetbrains.*` always refused). Seeded entities are namespaced by run id (`YT_TEST_PROJECT_PREFIX`, default `SCP_E2E`) and cleaned up in `afterAll`. Environment variables: copy [`.env.example`](.env.example) → `.env` (git-ignored).
 
 ```bash
-npm run test:e2e:analyze
+cp .env.example .env    # LOCAL instance + YT_TEST_ALLOW_DESTRUCTIVE=true
+npm run test:integration
 ```
 
 ---
 
-## Artifact publishing
+## Demo reels (`tests/e2e/demo`)
 
-[`publish-test-summary.mjs`](scripts/publish-test-summary.mjs) (`npm run publish:test-summary`) assembles `artifacts/index.html` linking the app ZIP, coverage, Playwright report, contact sheets, videos, `ui-analysis.md`, `video-integrity.json`, the environment manifest, and the cleanup report — a single browsable entry point for CI. It never fails on missing artifacts.
+Three reels — **01-setup** (install & configure), **02-walkthrough** and **03-multi-project** (per-project independence) — recorded **headed under Xvfb inside a Docker recorder image** against the host's real YouTrack ([`scripts/record-demos-docker.mjs`](scripts/record-demos-docker.mjs), config [`playwright.demo.config.ts`](playwright.demo.config.ts)), then voiced on the host (Piper TTS, `say` fallback — [`render-reels.mjs`](scripts/render-reels.mjs)) and QA'd with the demo-video-review analyzer.
+
+Prepared demo data ([`scripts/setup-youtrack-demo.mjs`](scripts/setup-youtrack-demo.mjs) via [`scripts/lib/seed-lib.mjs`](scripts/lib/seed-lib.mjs), which talks to the **current backend API** — `/api/extensionEndpoints/<app>/backend/<endpoint>?project=<KEY>`, `{ok,…}` envelope): two projects — **AppGlass (AGP)** with two teams (Platform, Mobile) and a deliberately over-committed Sprint, and **Orbit CRM (ORB)** with one team and a different cadence — proving per-project independence on camera.
+
+```bash
+npm run demo:reset          # wipe + reseed the fixed prepared data
+npm run demo:record:docker  # record both reels (Docker + Xvfb), voice, QA
+npm run demo:publish        # copy the latest reels into docs/media/
+```
+
+`npm run demo:provision` does the full one-shot setup (build → pack → install → seed → attach).
 
 ---
 
 ## CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))
 
-- **`build-and-test`** (every push/PR): `npm ci → lint → typecheck:all → test:unit → test:contract → build → pack`, then uploads `dist/sprint-capacity-planner.zip`.
-- **`security-and-review`**: placeholder steps for the security / code-review plugins.
-- **`youtrack`** (manual dispatch, opt-in, protected environment, `continue-on-error`): installs Playwright + ffmpeg, builds/packs, provisions the local no-Docker instance, runs integration + E2E (critical & regression), analyses UI artifacts, tears down, and uploads all reports.
-
-## Self-contained demo E2E suite (runs anywhere)
-
-`tests/e2e/demo` drives the **real** widget bundles against the **real** backend, wired to
-an in-memory YouTrack (the same transport fake the contract tests use) and served by
-`scripts/serve-demo.mjs`. It needs no live YouTrack, so it runs on any platform and in CI.
-
-```bash
-npm test                                     # full gate — also records the demos
-npm run test:e2e:demo                        # just the demos: builds widgets, records 10 journeys,
-                                             #   writes subtitles + ui-analysis.md (APPROVE/FIX verdict)
-npm run demo:serve                           # (optional) serve the demo at http://localhost:8090 to explore
-```
-
-**Running the tests produces the demos.** `npm test` / `npm run test:all` end by recording the
-full demo suite. Four of the journeys are **marketing reels** — `00-product-walkthrough`,
-`00b-team-capacity-reel`, `00c-team-configuration-reel`, `00d-installation-reel` — recorded like
-a real person: a branded **title card** at the start, a visible gliding **cursor**, human pacing,
-**720p**, on-screen **subtitles** plus a **WebVTT** track under `artifacts/demo/subtitles/`, and a
-**voiceover** `.mp4` under `artifacts/demo/reels/` (macOS `say` → timed narration muxed onto the
-video; skipped gracefully where TTS/ffmpeg are absent). See also the launch
-[blog post](docs/blog/announcing-sprint-capacity-planner.md).
-
-Journeys (13): the four **marketing reels**, overview/metrics, create-next-Sprint, member
-availability (own-row-only editing), manager controls (focus-factor override), settings, **team
-workflow** (create → set availability), **auto remaining capacity** (adding a task lowers
-remaining capacity automatically — no Refresh), **sprint navigation** (switch Sprints + open the
-**Kanban board** to see issues and jump into a Sprint), and **per-assignee planning** (Assigned
-load + Unassigned bucket). Each records a video,
-runs an axe accessibility scan, and asserts no console/page errors. The suite is **deterministic
-and independent of run order** — an auto-fixture resets the harness world before every test, so
-these are plain web tests that need no AI to run. Chromium runs **headless** (no window steals
-focus) in an **isolated context per test** that closes at the end. Artifacts + `ui-analysis.md`
-(with an APPROVE / FIX REQUIRED verdict) land under `artifacts/demo/`.
-
-> **Platform note:** the live-YouTrack path (`test:integration`) needs Linux x64 — the
-> standalone YouTrack 2025.1 build bundles GraalVM/Truffle 22, whose scripting engine cannot
-> start on Apple-Silicon macOS (see CHANGELOG → Platform notes). The demo suite above covers
-> the plugin UI end-to-end everywhere.
+- **`build-and-test`** (every push/PR): `npm ci → lint → typecheck:all → test:unit → test:contract → build → pack`, uploads `dist/sprint-capacity-planner.zip`.
+- **`demos`** (push to main + manual dispatch): boots a real YouTrack in Docker ([`ci-youtrack-docker.mjs`](scripts/ci-youtrack-docker.mjs)), provisions the demo state, records the reels under Xvfb, runs the `tests/youtrack` integration suite against the same instance, and publishes the reels as raw `.mp4` assets on the rolling `demos-latest` pre-release.
+- **`security-and-review`**: placeholder steps for the security / code-review tooling.

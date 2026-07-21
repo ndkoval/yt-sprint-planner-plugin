@@ -10,13 +10,26 @@ export interface Lane {
 }
 
 export interface SprintPlanningBoardProps {
-  /** Issues currently in the Sprint. */
+  /**
+   * Issues on THIS team's board: assigned to a team member, or unassigned (the
+   * Unassigned lane is shared by every team — that work is up for grabs).
+   */
   sprintIssues: IssueView[];
-  /** Backlog pool (configured search, not yet in the Sprint). */
+  /**
+   * In-Sprint issues assigned OUTSIDE this team (another team or a non-member).
+   * Shown as a compact info strip so no Sprint issue is invisible on every board;
+   * reassigning across teams goes through the issue overlay.
+   */
+  outsideIssues: IssueView[];
+  /** Backlog pool (the team's effective search, not yet in the Sprint). */
   backlogIssues: IssueView[];
   lanes: Lane[];
-  /** Sprint-level planned capacity (raw × focus factor), for the "what fits" overview. */
+  /** The team this board is scoped to; null when the project has a single team. */
+  teamName: string | null;
+  /** The TEAM's planned capacity (raw × focus factor), for the "what fits" overview. */
   plannedCapacityMinutes: number;
+  /** Sprint-wide figures for the overview line; null when the project has one team. */
+  sprintTotals: { plannedCapacityMinutes: number; committedMinutes: number } | null;
   hoursPerDay: number;
   isManager: boolean;
   /** Whether a backlog search is configured (controls the empty-state copy). */
@@ -24,8 +37,12 @@ export interface SprintPlanningBoardProps {
   busyIssueIds: ReadonlySet<string>;
   /** Plan an issue: pull into/out of the Sprint and set assignee. */
   onPlan(issueId: string, target: { inSprint: boolean; assigneeId: string | null }): void;
-  /** Open an issue (double-click a card) — the tab opens it in YouTrack's native issue view. */
-  onOpenIssue(issue: IssueView): void;
+  /**
+   * Open an issue (double-click a card) — the tab opens it in an in-page overlay
+   * anchored at `anchorY` (document-Y of the card, so the editor opens where the
+   * user is looking inside the tall widget).
+   */
+  onOpenIssue(issue: IssueView, anchorY: number): void;
 }
 
 const BACKLOG = '__backlog__';
@@ -41,23 +58,27 @@ const warnColor = 'var(--ring-warning-color, #e08c1c)';
 const mainColor = 'var(--ring-main-color, #1f8dd6)';
 
 /**
- * Drag-and-drop capacity planning board. Issues start in the **Backlog** lane (a configured
- * search) and are dragged onto a teammate to pull them into the Sprint AND assign them in one
- * move, or onto **Unassigned** to add them without an owner; drag back to the backlog to
- * remove from the Sprint. Each teammate lane is a capacity **timeline** — a track sized to
- * their available days with committed work filling it — so you can see how the issues fit and
- * who is over. A Sprint-level bar flags when total committed work (including anything still
- * unassigned) exceeds planned capacity, even when no single person is over.
+ * Drag-and-drop capacity planning board for ONE team. Issues start in the **Backlog**
+ * lane (the team's effective search) and are dragged onto a teammate to pull them into
+ * the Sprint AND assign them in one move, or onto **Unassigned** to add them without an
+ * owner; drag back to the backlog to remove from the Sprint. Each teammate lane is a
+ * capacity **timeline** — a track sized to their available days with committed work
+ * filling it — so you can see how the issues fit and who is over. A team-level bar
+ * flags when the team's committed work exceeds its planned capacity (for a single-team
+ * project, unassigned work counts too, so over-commitment shows even when everyone
+ * individually fits); with several teams the same bar also carries the Sprint totals.
  *
- * Dragging uses pointer events with a visible floating "ghost" of the card that follows the
- * cursor (rather than the browser's native HTML5 drag image), so the motion reads clearly and
- * works with mouse and touch alike.
+ * Dragging uses the native HTML5 API plus a visible floating "ghost" of the card that
+ * follows the cursor, so the motion reads clearly.
  */
 export function SprintPlanningBoard({
   sprintIssues,
+  outsideIssues,
   backlogIssues,
   lanes,
+  teamName,
   plannedCapacityMinutes,
+  sprintTotals,
   hoursPerDay,
   isManager,
   backlogConfigured,
@@ -96,7 +117,7 @@ export function SprintPlanningBoard({
   for (const lane of lanes) byLane.set(lane.userId, []);
   for (const issue of sprintIssues) {
     const key = issue.assigneeId ?? UNASSIGNED;
-    if (!byLane.has(key)) byLane.set(key, []); // assignee not on the team → its own lane
+    if (!byLane.has(key)) byLane.set(key, []); // safety net: assignee without a lane
     byLane.get(key)!.push(issue);
   }
   const laneOf = new Map<string, string>();
@@ -108,7 +129,12 @@ export function SprintPlanningBoard({
 
   const totalCommitted = sprintIssues.reduce((sum, i) => sum + effortOf(i), 0);
   const unassignedCommitted = committedFor(UNASSIGNED);
-  const sprintOver = totalCommitted > plannedCapacityMinutes && plannedCapacityMinutes >= 0;
+  // Single team: unassigned work is necessarily this team's, so it counts against the
+  // headline fit. Several teams: the Unassigned lane is shared, so the headline compares
+  // only the team's OWN committed work; unassigned shows in the subtitle + Sprint totals.
+  const fitCommitted = sprintTotals === null ? totalCommitted : totalCommitted - unassignedCommitted;
+  const teamOver = fitCommitted > plannedCapacityMinutes && plannedCapacityMinutes >= 0;
+  const outsideCommitted = outsideIssues.reduce((sum, i) => sum + effortOf(i), 0);
 
   const applyDrop = (issueId: string, laneKey: string): void => {
     if ((laneOf.get(issueId) ?? '') === laneKey) return; // dropped where it already is
@@ -191,20 +217,46 @@ export function SprintPlanningBoard({
     };
   };
 
+  // Card ids are LINKS: a single click opens the native issue view in a new tab
+  // (the sandboxed iframe blocks top-frame navigation, so window.open is the path).
+  const idLink = (issue: IssueView): React.JSX.Element => (
+    <a
+      href={`/issue/${encodeURIComponent(issue.idReadable)}`}
+      data-test="scp-card-id-link"
+      title={`Open ${issue.idReadable} in a new tab`}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        window.open(`/issue/${encodeURIComponent(issue.idReadable)}`, '_blank', 'noopener');
+      }}
+      onDoubleClick={(e) => e.stopPropagation()}
+      style={{ color: 'var(--ring-secondary-color)', textDecoration: 'underline', cursor: 'pointer' }}
+    >
+      {issue.idReadable}
+    </a>
+  );
+
+  const openAnchored = (e: React.MouseEvent, issue: IssueView): void => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    onOpenIssue(issue, rect.top + window.scrollY);
+  };
+
   const chip = (issue: IssueView): React.JSX.Element => {
     const noEstimate = issue.originalEffortMinutes === null;
     return (
       <div
         key={issue.id}
+        data-test="scp-card"
+        data-issue={issue.idReadable}
         draggable={isManager && !busyIssueIds.has(issue.id)}
         onDragStart={(e) => beginDrag(e, issue)}
         onDrag={moveGhost}
         onDragEnd={endDrag}
-        onDoubleClick={() => onOpenIssue(issue)}
+        onDoubleClick={(e) => openAnchored(e, issue)}
         title={`${issue.idReadable} ${issue.summary} — double-click to open`}
         style={cardStyle(issue, noEstimate)}
       >
-        <span style={{ color: 'var(--ring-secondary-color)' }}>{issue.idReadable}</span>
+        {idLink(issue)}
         <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 150 }}>
           {issue.summary || '(no summary)'}
         </span>
@@ -222,11 +274,13 @@ export function SprintPlanningBoard({
     return (
       <div
         key={issue.id}
+        data-test="scp-card"
+        data-issue={issue.idReadable}
         draggable={isManager && !busyIssueIds.has(issue.id)}
         onDragStart={(e) => beginDrag(e, issue)}
         onDrag={moveGhost}
         onDragEnd={endDrag}
-        onDoubleClick={() => onOpenIssue(issue)}
+        onDoubleClick={(e) => openAnchored(e, issue)}
         title={`${issue.idReadable} ${issue.summary} — double-click to open`}
         style={{
           display: 'flex',
@@ -244,7 +298,7 @@ export function SprintPlanningBoard({
           font: 'var(--ring-font-smaller)',
         }}
       >
-        <span style={{ color: 'var(--ring-secondary-color)', minWidth: 64 }}>{issue.idReadable}</span>
+        <span style={{ minWidth: 64 }}>{idLink(issue)}</span>
         <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {issue.summary || '(no summary)'}
         </span>
@@ -267,6 +321,8 @@ export function SprintPlanningBoard({
     return (
       <div
         key={key}
+        data-test="scp-lane"
+        data-lane={key}
         aria-label={`Lane ${laneMeta(key).name}`}
         onDragOver={(e) => overLane(e, key)}
         onDragLeave={() => setDragOver((d) => (d === key ? null : d))}
@@ -294,7 +350,7 @@ export function SprintPlanningBoard({
   };
 
   return (
-    <div ref={rootRef}>
+    <div ref={rootRef} data-test="scp-board">
       {/* Floating drag ghost — follows the cursor so the drag is clearly visible. */}
       {ghost !== null ? (
         <div
@@ -324,24 +380,34 @@ export function SprintPlanningBoard({
         </div>
       ) : null}
 
-      {/* Sprint-level "what fits" overview. */}
+      {/* Team-level "what fits" overview (carries the Sprint totals when >1 team). */}
       <div
+        data-test="scp-fit-banner"
+        data-over={teamOver ? 'true' : 'false'}
         style={{
           padding: 'calc(var(--ring-unit) * 1.5)',
           borderRadius: 'var(--ring-border-radius)',
           marginBottom: 'calc(var(--ring-unit) * 2)',
-          background: sprintOver ? 'rgba(192,52,29,0.08)' : 'rgba(26,147,111,0.08)',
-          border: `1px solid ${sprintOver ? errorColor : successColor}`,
+          background: teamOver ? 'rgba(192,52,29,0.08)' : 'rgba(26,147,111,0.08)',
+          border: `1px solid ${teamOver ? errorColor : successColor}`,
         }}
       >
-        <strong style={{ color: sprintOver ? errorColor : successColor }}>
-          {sprintOver
-            ? `Over planned capacity by ${days(totalCommitted - plannedCapacityMinutes)}d`
-            : `Fits — ${days(plannedCapacityMinutes - totalCommitted)}d of headroom`}
+        <strong style={{ color: teamOver ? errorColor : successColor }}>
+          {teamName !== null ? `${teamName}: ` : ''}
+          {teamOver
+            ? `Over planned capacity by ${days(fitCommitted - plannedCapacityMinutes)}d`
+            : `Fits — ${days(plannedCapacityMinutes - fitCommitted)}d of headroom`}
         </strong>
-        <span style={{ color: 'var(--ring-secondary-color)', marginLeft: 8 }}>
-          {days(totalCommitted)}d committed of {days(plannedCapacityMinutes)}d planned
-          {unassignedCommitted > 0 ? ` · ${days(unassignedCommitted)}d unassigned` : ''}
+        {/* Default text color: the banner's tinted background pushes the secondary
+            gray just below the WCAG AA 4.5:1 contrast ratio (measured 4.48). */}
+        <span style={{ marginLeft: 8 }}>
+          {days(fitCommitted)}d committed of {days(plannedCapacityMinutes)}d planned
+          {unassignedCommitted > 0
+            ? ` · ${days(unassignedCommitted)}d unassigned${sprintTotals !== null ? ' (shared)' : ''}`
+            : ''}
+          {sprintTotals !== null
+            ? ` · Sprint: ${days(sprintTotals.committedMinutes)}d of ${days(sprintTotals.plannedCapacityMinutes)}d planned`
+            : ''}
         </span>
       </div>
 
@@ -349,6 +415,7 @@ export function SprintPlanningBoard({
         {/* Backlog lane — a scrollable, searchable list you pull issues from into the Sprint. */}
         {backlogConfigured ? (
           <div
+            data-test="scp-lane-backlog"
             aria-label="Lane Backlog"
             onDragOver={(e) => overLane(e, BACKLOG)}
             onDragLeave={() => setDragOver((d) => (d === BACKLOG ? null : d))}
@@ -433,6 +500,25 @@ export function SprintPlanningBoard({
           return laneShell(key, header, bar, byLane.get(key) ?? [], isManager ? 'Drop issues here' : 'No issues');
         })}
       </div>
+
+      {/* Work on this Sprint that belongs to other teams — visible, but planned there. */}
+      {outsideIssues.length > 0 ? (
+        <p
+          data-test="scp-outside-team"
+          title={outsideIssues.map((i) => `${i.idReadable} → ${i.assigneeName ?? i.assigneeId}`).join('\n')}
+          style={{
+            font: 'var(--ring-font-smaller)',
+            color: 'var(--ring-secondary-color)',
+            marginTop: 'calc(var(--ring-unit))',
+            marginBottom: 0,
+          }}
+        >
+          Assigned outside this team: {outsideIssues.length}{' '}
+          {outsideIssues.length === 1 ? 'issue' : 'issues'} · {days(outsideCommitted)}d (planned on
+          other teams&apos; boards)
+        </p>
+      ) : null}
+
       {isManager ? (
         <p style={{ font: 'var(--ring-font-smaller)', color: 'var(--ring-secondary-color)', marginTop: 'calc(var(--ring-unit))' }}>
           Drag an issue from the backlog onto a teammate to pull it into the Sprint and assign it;

@@ -9,6 +9,12 @@
         "scpSprintDataJson": { "type": "string" },
         "scpReminderStateJson": { "type": "string" }
       }
+    },
+    {
+      "entityType": "User",
+      "properties": {
+        "scpPrefsJson": { "type": "string" }
+      }
     }
   ]
 }

@@ -4,7 +4,7 @@
  * See §9 of the spec. Every function here is pure.
  */
 import { MINUTES_PER_HOUR } from '../../shared/units.js';
-import type { CapacityDocument, CapacityRow, ProjectConfig } from '../../shared/types.js';
+import type { CapacityDocument, CapacityRow, Team } from '../../shared/types.js';
 import { countWorkingDays, type IsoDate } from '../dates/dates.js';
 
 /**
@@ -95,23 +95,24 @@ export function reapplyDefaults(
 }
 
 /**
- * Seed a fresh capacity document for a new Sprint from the current team config.
- * Each enabled participant gets a row with available = default,
- * availableWasCustomized = false. A participant's default capacity is the
- * full-Sprint capacity scaled by their part-time allocation (1 = full-time).
+ * Seed a fresh capacity document for one TEAM of a new Sprint. Each enabled
+ * participant gets a row with available = default, availableWasCustomized = false.
+ * A participant's default capacity is the full-Sprint capacity scaled by their
+ * part-time allocation (1 = full-time).
  *
  * @param namesByLogin Display names for participant logins (falls back to the login).
  */
 export function seedCapacityDocument(
-  config: ProjectConfig,
+  team: Team,
+  hoursPerDay: number,
   namesByLogin: Record<string, string>,
   start: IsoDate,
   finish: IsoDate,
   now: number,
 ): CapacityDocument {
-  const fullTime = defaultCapacityForSprint(start, finish, config.hoursPerDay);
+  const fullTime = defaultCapacityForSprint(start, finish, hoursPerDay);
   const rows: Record<string, CapacityRow> = {};
-  for (const participant of config.participants) {
+  for (const participant of team.participants) {
     if (!participant.enabled) continue;
     const defaultMinutes = Math.round(fullTime * (participant.allocation ?? 1));
     rows[participant.userId] = {
@@ -125,5 +126,5 @@ export function seedCapacityDocument(
       updatedBy: participant.userId,
     };
   }
-  return { version: 2, createdFromConfigVersion: config.version, rows };
+  return { version: 2, createdFromConfigVersion: 3, rows };
 }

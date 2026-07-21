@@ -18,8 +18,9 @@ import {
  * Reel #1 — install & configure, as ONE continuous recording that starts from the target
  * project. We open the project's own Apps settings (where the Sprint Capacity Planner is
  * attached to this project), open the app, then set it up in one place with real interactions:
- * pick the board and effort fields, type a backlog search, add a teammate with the picker and
- * set their part-time allocation, and save.
+ * pick the board and effort fields, type a backlog search, split the project into small teams
+ * (Platform + Mobile), add a teammate to a team with the picker, set their part-time
+ * allocation, and save.
  */
 test.describe('Install & configure', () => {
   test.beforeAll(() => resetDemoState());
@@ -40,7 +41,7 @@ test.describe('Install & configure', () => {
     const nav = page
       .goto(`/projects/${PROJECT_KEY}?${intro.toString()}`, { waitUntil: 'domcontentloaded' })
       .catch(() => null);
-    await page.waitForTimeout(950);
+    await page.waitForTimeout(500);
     await cap.say('Add the Sprint Capacity Planner to your project — one app, installed from a single ZIP.');
     await nav;
     await page.waitForTimeout(1200);
@@ -76,13 +77,20 @@ test.describe('Install & configure', () => {
     // 5. Backlog search — actually type a query.
     await moveTo(page, sf.getByRole('heading', { name: 'Planning backlog' }));
     await cap.say('Define the backlog with any YouTrack search — that’s what you plan from.');
-    await humanFill(page, sf.getByPlaceholder('#Unresolved'), `project: ${PROJECT_KEY} State: Open`);
+    await humanFill(page, sf.getByLabel('Backlog search query'), `project: ${PROJECT_KEY} State: Open`);
     await settle(page, 900);
 
-    // 6. Team — add a teammate with the picker, then set a part-time allocation.
-    await moveTo(page, sf.getByRole('heading', { name: 'Team' }));
-    await cap.say('Add teammates with a picker.');
-    await humanClick(page, sf.getByRole('combobox', { name: 'Add a team member…' }));
+    // 6. Teams — a big project plans as SMALL TEAMS; each has its own members.
+    await moveTo(page, sf.getByRole('heading', { name: 'Teams' }));
+    await cap.say('Big project? Split planning into small teams — here, Platform and Mobile.');
+    // Team names live in input VALUES (not text), so target the card by its stable id.
+    const mobileCard = sf.locator('[data-test="scp-team-card"][data-team="team-2"]');
+    await expect(mobileCard).toBeVisible();
+    await settle(page, 700);
+
+    // Add Erin to the Mobile team with the picker, then set a part-time allocation.
+    await cap.say('Each team picks its own members — add Erin to Mobile.');
+    await humanClick(page, mobileCard.getByRole('combobox', { name: 'Add a team member…' }));
     await settle(page, 500);
     await humanFill(page, sf.getByRole('textbox', { name: 'Filter items' }), 'Erin');
     await settle(page, 800);
@@ -92,8 +100,16 @@ test.describe('Install & configure', () => {
     await humanFill(page, sf.getByLabel(/Allocation for Erin Park/i), '60');
     await settle(page, 900);
 
-    // 7. Save.
-    await cap.say('Save — and you’re ready to plan.');
+    // 7. Creating a whole new team is one click + a name.
+    await cap.say('Need another squad? Add a team and name it.');
+    await humanClick(page, sf.getByRole('button', { name: 'Add team', exact: true }));
+    const newCard = sf.locator('[data-test="scp-team-card"]').nth(2);
+    await expect(newCard).toBeVisible();
+    await humanFill(page, newCard.getByLabel('Team name'), 'Design');
+    await settle(page, 800);
+
+    // 8. Save.
+    await cap.say('Save — and every team is ready to plan.');
     await humanClick(page, sf.getByRole('button', { name: 'Save settings' }));
     await expect(sf.getByText('Settings saved.')).toBeVisible();
     await settle(page, 1500);

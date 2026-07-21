@@ -2,6 +2,94 @@
 
 All notable changes to the Sprint Capacity Planner are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-07-21
+
+Teams + per-project settings hardening.
+
+### Added
+
+- **Multi-team planning.** A project can now hold up to 20 small teams planning
+  independently inside shared Sprints (`ProjectConfig.teams`; storage model **v3**).
+  Each team has its own participants, capacity table, Focus Factor calibration and
+  backlog filter; all teams share the board and Sprint cadence. The same person may
+  be in **several teams** (an independent capacity row + allocation per team); their
+  assigned issues count toward every team they're in, while Sprint totals count each
+  issue exactly once.
+  The planner gains a team switcher (only when >1 team) with team-scoped capacity,
+  board, summary and effort sections; the settings form keeps the familiar flat
+  single-team layout until "Add another team" unlocks the multi-team cards.
+  Existing v2 data is migrated lazily on read into a single default team ("Team 1")
+  and persisted on the next write; **v0.2.0 export bundles still import** (migrated on
+  the way in). Backend endpoint names are unchanged; team-scoped mutations take an
+  optional `teamId` that defaults to the only team (ambiguous in a multi-team project
+  → `VALIDATION_FAILED`). Removed teams keep their Sprint history (retained in
+  storage, hidden from views); teams added later are materialized lazily.
+- **Per-team backlog overrides** (`Team.backlogQuery`) — a team's board pulls from its
+  own search when set, else from the project-level query.
+- **Cross-team assignee handoff.** The issue overlay's assignee picker lists every
+  team's members (grouped by team), so moving work between teams is a two-click action.
+- **Per-project reminder lead-days override** (`ProjectConfig.reminderLeadDays`,
+  0–30): wins over the app-level setting; **0 turns reminders off for the project**.
+  The reminder workflow reads both v2 and v3 documents (lazy migration means an
+  untouched project keeps v2 JSON indefinitely).
+- **Project-scoped default backlog query.** New configs default to
+  `project: <KEY> #Unresolved` instead of a project-blind search.
+- **Main-menu placement.** New `sprint-capacity-menu` widget at `MAIN_MENU_ITEM`: a
+  direct, project-independent entry point in the global sidebar (handy for team
+  members updating their availability without hunting for the project tab). It opens
+  with an in-widget project picker (the caller's visible projects) and binds late.
+- **Per-user preferences.** New `scpPrefsJson` **User** extension property served by
+  project-independent `GET/POST prefs` endpoints (self-scoped, no project parameter):
+  the main-menu planner remembers each user's last-picked project **server-side**
+  (the sandboxed widget iframe has no reliable `localStorage`).
+
+### Changed
+
+- **No app permission scheme.** `ProjectConfig.managersGroup` is **removed**; manager
+  = project leader **or** the caller holding YouTrack's own `UPDATE_PROJECT`
+  permission on the project, checked server-side on every mutation
+  (`ctx.currentUser.hasPermission('UPDATE_PROJECT', project)`). App management now
+  aligns exactly with "who can change the project's settings in YouTrack"; the v2→v3
+  migration deliberately drops the old field.
+- **Board picker hardened.** The settings form lists only boards attached to the
+  current project (a foreign board would silently break sprint reads), and boards with
+  sprints disabled stay visible but unselectable, labelled "sprints disabled on this
+  board".
+- **Generic default name template.** New configs default to `Sprint {sequence}`; the
+  v2→v3 migration rewrites the old shipped default (`AppGlass {year}-S{sequence}` —
+  demo branding, never user intent) to it. Custom templates are left untouched.
+- **Per-team Focus Factor calibration.** Each team's next factor is learned from that
+  team's own completed Sprints (member-attributed issues vs. the team's capacity);
+  the learning rate stays shared. One team's over/under-delivery never moves another
+  team's factor.
+- **E2E suite rewritten** against a real YouTrack: `scripts/run-e2e.mjs` auto-provisions
+  (install + seed + attach) when `YT_TEST_BASE_URL` and an admin token are present, and
+  `scripts/seed-e2e.mjs` seeds **two** deterministic projects — SCPE1 (two teams) and
+  SCPE2 (one team) — for the multi-team and per-project-independence assertions.
+  Specs self-skip without an instance. `npm run test:all` now ends with `test:e2e`.
+- **Demo pipeline rewritten to the current backend API.** Seeding
+  (`scripts/lib/seed-lib.mjs`, `setup-youtrack-demo.mjs`) drives the real
+  `/api/extensionEndpoints/<app>/backend/*` endpoints ({ok} envelope, v3 configs) and
+  prepares two demo projects (AppGlass with Platform/Mobile teams, Orbit CRM with one
+  team); reels are recorded headed under Xvfb in Docker (`record-demos-docker.mjs`).
+- **Roster changes take effect immediately.** Saving settings now reconciles every
+  managed Sprint with the new config — teams new to the config are seeded and rows
+  for newly joined participants are backfilled — instead of waiting for the next
+  Sprint registration.
+- **Issue overlay reworked.** Double-clicking a board card opens a wide (≤1080 px)
+  panel anchored right at the card, over a dimmed backdrop inside the widget (no host
+  modal mode); field values edit through native-style Ring UI inline selects; issue
+  ids are links opening the native issue view in a new tab (from the overlay and from
+  board cards).
+
+### Fixed
+
+- **Sprint selector no longer scrolls the host page** — its dropdown filter box is
+  gone (the filter input's autofocus yanked the embedding page on open; sprint lists
+  are short anyway).
+- **Member picker resets after adding a participant** — it no longer keeps the
+  previous selection/filter text (the "sticky choice" UX in team settings).
+
 ## [0.2.0] — 2026-07-21
 
 Compliance rewrite to align with the approved YouTrack app patterns, plus fixes for
@@ -221,7 +309,9 @@ Additional unfinished wiring: no API route sets the `scpCapacityManagers` group 
 - **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) — fast lane (lint/typecheck/unit/contract/build/pack + package upload) and an opt-in, gated YouTrack lane.
 - **Documentation** — [`README.md`](README.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`WORKFLOWS.md`](WORKFLOWS.md), [`DATA_MODEL.md`](DATA_MODEL.md), [`TESTING.md`](TESTING.md), and [`SECURITY.md`](SECURITY.md).
 
-[Unreleased]: https://github.com/ndkoval/yt-sprint-planner-plugin/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/ndkoval/yt-sprint-planner-plugin/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ndkoval/yt-sprint-planner-plugin/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/ndkoval/yt-sprint-planner-plugin/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/ndkoval/yt-sprint-planner-plugin/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ndkoval/yt-sprint-planner-plugin/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ndkoval/yt-sprint-planner-plugin/releases/tag/v0.1.0

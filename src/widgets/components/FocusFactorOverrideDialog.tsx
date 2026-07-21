@@ -7,6 +7,8 @@ import { formatPercent } from './format';
 export interface FocusFactorOverrideDialogProps {
   show: boolean;
   currentValue: number;
+  /** The team being overridden; null when the project has a single team. */
+  teamName?: string | null;
   saving?: boolean;
   onCancel(): void;
   onSubmit(request: { newValue: number; reason: string }): void;
@@ -19,6 +21,7 @@ export interface FocusFactorOverrideDialogProps {
 export function FocusFactorOverrideDialog({
   show,
   currentValue,
+  teamName = null,
   saving = false,
   onCancel,
   onSubmit,
@@ -49,7 +52,9 @@ export function FocusFactorOverrideDialog({
       }}
     >
       <div style={{ padding: 'calc(var(--ring-unit) * 3)', minWidth: 380 }}>
-        <h2 style={{ marginTop: 0, font: 'var(--ring-font-larger)' }}>Override focus factor</h2>
+        <h2 style={{ marginTop: 0, font: 'var(--ring-font-larger)' }}>
+          Override focus factor{teamName !== null ? ` — ${teamName}` : ''}
+        </h2>
         <p style={{ color: 'var(--ring-secondary-color)' }}>
           Current: {formatPercent(currentValue)}
         </p>

@@ -4,9 +4,9 @@
  * regression projects (declared as their dependency in playwright.config.ts).
  *
  * Skips itself when there is no instance, leaving the persona specs to skip too.
- *
- * SPIKE: the YouTrack Hub login form selectors are version-specific; confirm the
- * username/password field + submit control on the target build.
+ * Login uses id/type selectors (the Hub form's accessible names are unreliable
+ * across builds — same proven flow as the demo global-setup). New Hub users may
+ * be greeted by an agreement/banner; those are accepted best-effort.
  */
 import { test as setup, expect } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
@@ -26,8 +26,6 @@ async function login(
   }
   await page.goto('/');
   await page.waitForTimeout(2000);
-  // Use the same proven YouTrack/Hub login flow as the demo global-setup (id/type selectors,
-  // not role/label — the Hub form's accessible names are unreliable across builds).
   const username = (await page.$('input#username')) ?? (await page.$('input[type=text]'));
   if (username === null) {
     setup.skip(true, 'login form not found (already authenticated or unexpected page)');
@@ -37,6 +35,15 @@ async function login(
   await (await page.$('input[type=password]'))!.fill(persona.password);
   await (await page.$('button[type=submit]'))!.click();
   await page.waitForTimeout(4000);
+
+  // First-login niceties (agreement / notification banners) — accept and move on.
+  for (const name of [/^Accept$/i, /^I agree$/i, /^Continue$/i]) {
+    const button = page.getByRole('button', { name }).first();
+    if ((await button.count()) > 0 && (await button.isVisible().catch(() => false))) {
+      await button.click().catch(() => {});
+      await page.waitForTimeout(1000);
+    }
+  }
 
   // Confirm we reached an authenticated view before saving state.
   await expect(page).not.toHaveURL(/login/i, { timeout: 15_000 });
@@ -56,6 +63,6 @@ setup('authenticate bob', async ({ page }) => {
   await login(page, 'bob');
 });
 
-setup('authenticate unauthorized', async ({ page }) => {
-  await login(page, 'unauthorized');
+setup('authenticate eve', async ({ page }) => {
+  await login(page, 'eve');
 });

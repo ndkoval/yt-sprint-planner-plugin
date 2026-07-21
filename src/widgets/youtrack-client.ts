@@ -143,6 +143,26 @@ export class NativeYouTrack {
     return { id: String(pick(p, 'id')), key: String(pick(p, 'shortName')), name: String(pick(p, 'name') ?? '') };
   }
 
+  /**
+   * Projects VISIBLE TO THE CURRENT USER (the endpoint filters by permission —
+   * verified on 2025.3 with a regular member). Used by the main-menu placement's
+   * project picker, where the host provides no project context.
+   */
+  async listProjects(): Promise<Array<{ id: string; key: string; name: string }>> {
+    const projects = await this.get('admin/projects', {
+      fields: 'id,shortName,name',
+      $top: '200',
+    });
+    if (!Array.isArray(projects)) return [];
+    return projects
+      .filter((p) => typeof pick(p, 'shortName') === 'string')
+      .map((p) => ({
+        id: String(pick(p, 'id')),
+        key: String(pick(p, 'shortName')),
+        name: String(pick(p, 'name') ?? pick(p, 'shortName')),
+      }));
+  }
+
   async searchUsers(query: string, limit = 20): Promise<YtUser[]> {
     const users = await this.get('users', {
       fields: 'id,login,name',

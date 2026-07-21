@@ -7,6 +7,7 @@ import {
   focusFactorOverrideSchema,
   participantSchema,
   projectConfigSchema,
+  teamSchema,
   sprintEntrySchema,
   sprintDataDocumentSchema,
 } from '../../src/shared/schemas.js';
@@ -28,25 +29,27 @@ const validDoc = {
   rows: { alice: validRow },
 };
 
+const team = (id: string, name: string, logins: string[]) => ({
+  id,
+  name,
+  participants: logins.map((userId) => ({ userId, enabled: true, allocation: 1 })),
+});
+
 const validConfig = {
-  version: 2,
+  version: 3,
   boardId: 'board-1',
   originalEffortField: 'Original estimation',
   currentEffortField: 'Estimation',
   hoursPerDay: 8,
   sprintLengthDays: 14,
   datePolicy: 'continuous',
-  nameTemplate: 'AppGlass {year}-S{sequence}',
+  nameTemplate: 'Sprint {sequence}',
   backlogQuery: '',
   learningRate: 0.2,
-  participants: [{ userId: 'alice', enabled: true, allocation: 1 }],
+  teams: [team('team-1', 'Team 1', ['alice'])],
 };
 
-const validEntry = {
-  sequence: 1,
-  name: 'AppGlass 2026-S1',
-  start: '2026-01-01',
-  finish: '2026-01-14',
+const validTeamEntry = {
   capacityRevision: 1,
   capacity: validDoc,
   focusFactor: 0.75,
@@ -54,6 +57,14 @@ const validEntry = {
   focusFactorOverride: null,
   excludedFromCalibration: false,
   calibrationSkipReason: null,
+};
+
+const validEntry = {
+  sequence: 1,
+  name: 'Sprint 1',
+  start: '2026-01-01',
+  finish: '2026-01-14',
+  teams: { 'team-1': validTeamEntry },
   createdAt: 1,
   updatedAt: 1,
 };
@@ -92,7 +103,7 @@ describe('capacityRowSchema', () => {
 });
 
 describe('capacityDocumentSchema', () => {
-  it('accepts a valid document', () => {
+  it('accepts a valid document (capacity docs stayed at version 2 in the v3 model)', () => {
     expect(capacityDocumentSchema.safeParse(validDoc).success).toBe(true);
   });
 
@@ -147,9 +158,88 @@ describe('participantSchema', () => {
   });
 });
 
+describe('teamSchema', () => {
+  it('accepts a team with an optional backlog override', () => {
+    expect(teamSchema.safeParse(team('team-1', 'Alpha', ['alice'])).success).toBe(true);
+    expect(
+      teamSchema.safeParse({ ...team('team-1', 'Alpha', ['alice']), backlogQuery: '#Unresolved' })
+        .success,
+    ).toBe(true);
+  });
+
+  it('rejects empty ids and blank names', () => {
+    expect(teamSchema.safeParse(team('', 'Alpha', [])).success).toBe(false);
+    expect(teamSchema.safeParse(team('team-1', '   ', [])).success).toBe(false);
+  });
+});
+
 describe('projectConfigSchema', () => {
-  it('accepts a valid config', () => {
+  it('accepts a valid v3 config', () => {
     expect(projectConfigSchema.safeParse(validConfig).success).toBe(true);
+  });
+
+  it('accepts several disjoint teams', () => {
+    const config = {
+      ...validConfig,
+      teams: [team('team-1', 'Alpha', ['alice']), team('team-2', 'Beta', ['bob'])],
+    };
+    expect(projectConfigSchema.safeParse(config).success).toBe(true);
+  });
+
+  it('rejects duplicate team ids', () => {
+    const config = {
+      ...validConfig,
+      teams: [team('team-1', 'Alpha', ['alice']), team('team-1', 'Beta', ['bob'])],
+    };
+    expect(projectConfigSchema.safeParse(config).success).toBe(false);
+  });
+
+  it('rejects duplicate team names case-insensitively', () => {
+    const config = {
+      ...validConfig,
+      teams: [team('team-1', 'Alpha', ['alice']), team('team-2', ' ALPHA ', ['bob'])],
+    };
+    expect(projectConfigSchema.safeParse(config).success).toBe(false);
+  });
+
+  it('ACCEPTS the same login in two different teams (shared specialist)', () => {
+    const config = {
+      ...validConfig,
+      teams: [team('team-1', 'Alpha', ['alice', 'bob']), team('team-2', 'Beta', ['alice'])],
+    };
+    expect(projectConfigSchema.safeParse(config).success).toBe(true);
+  });
+
+  it('rejects a duplicate login WITHIN one team', () => {
+    const config = {
+      ...validConfig,
+      teams: [team('team-1', 'Alpha', ['alice', 'alice'])],
+    };
+    const result = projectConfigSchema.safeParse(config);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => /already in this team/.test(i.message))).toBe(true);
+    }
+  });
+
+  it('rejects zero teams', () => {
+    expect(projectConfigSchema.safeParse({ ...validConfig, teams: [] }).success).toBe(false);
+  });
+
+  it('rejects more than 20 teams', () => {
+    const teams = Array.from({ length: 21 }, (_, i) => team(`team-${i + 1}`, `Team ${i + 1}`, []));
+    expect(projectConfigSchema.safeParse({ ...validConfig, teams }).success).toBe(false);
+    expect(
+      projectConfigSchema.safeParse({ ...validConfig, teams: teams.slice(0, 20) }).success,
+    ).toBe(true);
+  });
+
+  it('accepts reminderLeadDays in 0..30 and rejects values outside', () => {
+    expect(projectConfigSchema.safeParse({ ...validConfig, reminderLeadDays: 0 }).success).toBe(true);
+    expect(projectConfigSchema.safeParse({ ...validConfig, reminderLeadDays: 30 }).success).toBe(true);
+    expect(projectConfigSchema.safeParse({ ...validConfig, reminderLeadDays: -1 }).success).toBe(false);
+    expect(projectConfigSchema.safeParse({ ...validConfig, reminderLeadDays: 31 }).success).toBe(false);
+    expect(projectConfigSchema.safeParse({ ...validConfig, reminderLeadDays: 2.5 }).success).toBe(false);
   });
 
   it('rejects a non-positive hoursPerDay', () => {
@@ -172,6 +262,22 @@ describe('projectConfigSchema', () => {
     expect(projectConfigSchema.safeParse(rest).success).toBe(false);
   });
 
+  it('rejects the removed managersGroup field (no app permission scheme in v3)', () => {
+    expect(
+      projectConfigSchema.safeParse({ ...validConfig, managersGroup: 'Capacity Managers' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('rejects the pre-teams flat participants list (moved into teams in v3)', () => {
+    expect(
+      projectConfigSchema.safeParse({
+        ...validConfig,
+        participants: [{ userId: 'alice', enabled: true, allocation: 1 }],
+      }).success,
+    ).toBe(false);
+  });
+
   it('rejects extra fields via .strict()', () => {
     expect(projectConfigSchema.safeParse({ ...validConfig, extra: 1 }).success).toBe(false);
   });
@@ -184,21 +290,27 @@ describe('projectConfigSchema', () => {
 });
 
 describe('configDocumentSchema', () => {
-  it('accepts a valid document', () => {
+  it('accepts a valid v3 document', () => {
+    expect(
+      configDocumentSchema.safeParse({ version: 3, revision: 3, config: validConfig }).success,
+    ).toBe(true);
+  });
+
+  it('rejects the previous document version', () => {
     expect(
       configDocumentSchema.safeParse({ version: 2, revision: 3, config: validConfig }).success,
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('rejects a negative revision', () => {
     expect(
-      configDocumentSchema.safeParse({ version: 2, revision: -1, config: validConfig }).success,
+      configDocumentSchema.safeParse({ version: 3, revision: -1, config: validConfig }).success,
     ).toBe(false);
   });
 });
 
 describe('sprintEntrySchema / sprintDataDocumentSchema', () => {
-  it('accepts a valid entry', () => {
+  it('accepts a valid v3 entry (per-team state under teams)', () => {
     expect(sprintEntrySchema.safeParse(validEntry).success).toBe(true);
   });
 
@@ -206,13 +318,29 @@ describe('sprintEntrySchema / sprintDataDocumentSchema', () => {
     expect(sprintEntrySchema.safeParse({ ...validEntry, start: '01/01/2026' }).success).toBe(false);
   });
 
+  it('rejects an entry with pre-teams top-level capacity fields', () => {
+    expect(
+      sprintEntrySchema.safeParse({ ...validEntry, capacityRevision: 1, capacity: validDoc })
+        .success,
+    ).toBe(false);
+  });
+
+  it('rejects a team entry with extra fields', () => {
+    expect(
+      sprintEntrySchema.safeParse({
+        ...validEntry,
+        teams: { 'team-1': { ...validTeamEntry, extra: 1 } },
+      }).success,
+    ).toBe(false);
+  });
+
   it('accepts a valid sprint-data document', () => {
     expect(
-      sprintDataDocumentSchema.safeParse({ version: 2, sprints: { '207-1': validEntry } }).success,
+      sprintDataDocumentSchema.safeParse({ version: 3, sprints: { '207-1': validEntry } }).success,
     ).toBe(true);
   });
 
   it('rejects the wrong document version', () => {
-    expect(sprintDataDocumentSchema.safeParse({ version: 1, sprints: {} }).success).toBe(false);
+    expect(sprintDataDocumentSchema.safeParse({ version: 2, sprints: {} }).success).toBe(false);
   });
 });

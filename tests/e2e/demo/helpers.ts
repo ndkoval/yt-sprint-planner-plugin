@@ -38,6 +38,8 @@ export const test = base.extend<{ demoCursor: void }>({
 
 export const PROJECT_KEY = process.env.PROJECT_KEY ?? 'AGP';
 export const BOARD_NAME = 'AppGlass Board';
+/** The second demo project (per-project independence scenes). */
+export const SECOND_PROJECT_KEY = process.env.SECOND_PROJECT_KEY ?? 'ORB';
 
 /** Find the app widget's iframe (a nested srcdoc frame) by its content. */
 export async function appFrame(page: Page, timeoutMs = 30_000): Promise<Frame> {
@@ -61,6 +63,8 @@ export interface OpenAppOptions {
   /** Narrate this line over the title card while YouTrack + the widget load (kills dead air). */
   cap?: { say(text: string): Promise<void> };
   intro?: string;
+  /** Target project key (defaults to the flagship demo project). */
+  projectKey?: string;
 }
 
 /**
@@ -79,7 +83,7 @@ export async function openProjectApp(
     params.set('reelTitle', opts.reel.title);
     params.set('reelSubtitle', opts.reel.subtitle);
   }
-  const url = `/projects/${PROJECT_KEY}?${params.toString()}`;
+  const url = `/projects/${opts.projectKey ?? PROJECT_KEY}?${params.toString()}`;
   // Paint the title card on the current (about:blank) page first so the reel's VERY FIRST frame
   // is the branded card, not a white flash before the navigation's document-start card paints.
   if (opts.reel) await primeTitleCard(page, opts.reel.title, opts.reel.subtitle);
@@ -87,7 +91,7 @@ export async function openProjectApp(
     // Start navigating (the card paints at document-start) and narrate over the load without
     // waiting for the whole YouTrack SPA — keeps the intro card's dead-air short.
     const nav = page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => null);
-    await page.waitForTimeout(950);
+    await page.waitForTimeout(500);
     await opts.cap.say(opts.intro);
     await nav;
   } else {
@@ -182,6 +186,15 @@ export async function dragCard(
   await source.dispatchEvent('dragend', { dataTransfer: dt }).catch(() => {});
   await dt.dispose();
   await page.waitForTimeout(400);
+
+  // Backstop for the host's one-time DELETE consent prompt (drag-to-backlog removes
+  // an issue from the sprint). Global setup pre-authorizes off-camera, so this should
+  // never fire during a reel — but a stalled prompt would otherwise freeze the take.
+  const allow = page.getByRole('button', { name: /Allow and don't ask again/i });
+  if (await allow.isVisible().catch(() => false)) {
+    await allow.click().catch(() => {});
+    await page.waitForTimeout(600);
+  }
 }
 
 /**

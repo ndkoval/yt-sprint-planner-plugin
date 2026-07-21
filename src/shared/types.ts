@@ -23,6 +23,15 @@ export type FocusFactorSource = 'bootstrap' | 'calculated' | 'manual' | 'carried
 export type DatePolicy = 'continuous';
 
 /**
+ * Team id assigned by the v2→v3 migration to the project's original flat participant
+ * list. Also the first id `newTeamId` generates in an empty config.
+ */
+export const DEFAULT_TEAM_ID = 'team-1';
+
+/** Hard cap on teams per project — the UI is designed for a handful of small teams. */
+export const MAX_TEAMS = 20;
+
+/**
  * One person's capacity for a specific Sprint.
  * Persisted inside {@link CapacityDocument.rows}, keyed by user login.
  */
@@ -45,7 +54,7 @@ export interface CapacityRow {
   updatedBy: UserId;
 }
 
-/** Versioned capacity document stored inside a Sprint's {@link SprintEntry}. */
+/** Versioned capacity document stored inside a {@link TeamSprintEntry}. */
 export interface CapacityDocument {
   version: 2;
   /** Config revision the rows were seeded from. */
@@ -66,7 +75,7 @@ export interface CompletionCalculation {
   observedFocusFactor: number | null;
 }
 
-/** Record of a manual Focus Factor override (kept inside {@link SprintEntry}). */
+/** Record of a manual Focus Factor override (kept inside {@link TeamSprintEntry}). */
 export interface FocusFactorOverride {
   reason: string;
   oldValue: number;
@@ -76,7 +85,7 @@ export interface FocusFactorOverride {
   timestamp: number;
 }
 
-/** One participant in the configured team. */
+/** One participant of a team. */
 export interface Participant {
   /** User login. */
   userId: UserId;
@@ -91,9 +100,32 @@ export interface Participant {
   note?: string | undefined;
 }
 
+/**
+ * A small team planning independently within the project. All teams share the
+ * project's board and Sprint cadence (native Sprints are per-board); what is
+ * independent is each team's participants, capacity, Focus Factor calibration and
+ * backlog filter. The SAME person may belong to several teams (a shared specialist):
+ * they get an independent capacity row (and allocation) in each team, and their
+ * assigned issues count toward EVERY team they belong to — so a shared member's
+ * work appears in each of their teams' metrics, while Sprint totals still count
+ * every issue exactly once.
+ */
+export interface Team {
+  /** Stable id, unique per project. Generated once and never renamed. */
+  id: string;
+  /** Display name, unique per project (case-insensitive). */
+  name: string;
+  participants: Participant[];
+  /**
+   * Optional backlog OVERRIDE for this team (a YouTrack search). Empty or absent
+   * means the team uses the project-level {@link ProjectConfig.backlogQuery}.
+   */
+  backlogQuery?: string | undefined;
+}
+
 /** Project configuration document (persisted inside {@link ConfigDocument}). */
 export interface ProjectConfig {
-  version: 2;
+  version: 3;
   boardId: string;
   originalEffortField: string;
   currentEffortField: string;
@@ -105,20 +137,29 @@ export interface ProjectConfig {
    * YouTrack search query defining the planning backlog — the pool of issues you can pull
    * into a Sprint from the board's backlog lane. Issues already in the Sprint are excluded
    * automatically. Empty disables the backlog lane. E.g. `project: AGP State: Open`.
+   * Teams may override it per-team ({@link Team.backlogQuery}).
    */
   backlogQuery: string;
   /**
    * Learning rate (0 < α ≤ 1): how strongly each new Sprint's Focus Factor moves toward
    * the previous Sprint's observed factor. New Sprints start at the bootstrap factor
-   * and are then calibrated by this rate (see the focus-factor domain).
+   * and are then calibrated by this rate (see the focus-factor domain). Shared by all
+   * teams; each team's factor still evolves independently from its own observations.
    */
   learningRate: number;
-  participants: Participant[];
   /**
-   * Name of the YouTrack group whose members are Capacity Managers (may plan Sprints and
-   * edit settings). Optional; while unset, only the project leader can change settings.
+   * The project's teams (1..MAX_TEAMS). Single-team projects see no team chrome.
+   * Teams (like every other setting here) are edited only by MANAGERS — users with
+   * YouTrack's own `UPDATE_PROJECT` permission on the project (or its leader); the
+   * app defines no permission scheme of its own.
    */
-  managersGroup?: string | undefined;
+  teams: Team[];
+  /**
+   * Per-project override of the app-level `reminderLeadDays` setting (days before a
+   * Sprint starts to remind participants who kept the default availability).
+   * 0 disables reminders for this project. Absent means "use the app default".
+   */
+  reminderLeadDays?: number | undefined;
 }
 
 /** Focus Factor tuning, extracted from config for the calculation layer. */
@@ -132,16 +173,34 @@ export interface FocusFactorSettings {
 
 /** The `scpConfigJson` project extension property. */
 export interface ConfigDocument {
-  version: 2;
+  version: 3;
   /** Optimistic-concurrency revision of the config. */
   revision: number;
   config: ProjectConfig;
 }
 
 /**
+ * One team's app-owned state for one managed Sprint. Lives inside
+ * {@link SprintEntry.teams}, keyed by team id.
+ */
+export interface TeamSprintEntry {
+  /** Optimistic-concurrency revision of this team's capacity document. */
+  capacityRevision: number;
+  capacity: CapacityDocument;
+  focusFactor: number;
+  focusFactorSource: FocusFactorSource;
+  focusFactorOverride: FocusFactorOverride | null;
+  excludedFromCalibration: boolean;
+  calibrationSkipReason: string | null;
+}
+
+/**
  * App-owned state for one managed Sprint, stored inside {@link SprintDataDocument}.
  * `name`/`start`/`finish` are snapshots of the native Sprint (refreshed on register);
- * the native Sprint remains the source of truth for membership and dates.
+ * the native Sprint remains the source of truth for membership and dates. The
+ * sprint-level fields are shared by all teams; per-team planning state is in `teams`.
+ * Entries for teams no longer present in the config are RETAINED (non-destructive)
+ * but hidden from views.
  */
 export interface SprintEntry {
   /** App sequence number (1-based, unique per project). */
@@ -151,20 +210,15 @@ export interface SprintEntry {
   start: string;
   /** yyyy-mm-dd. */
   finish: string;
-  capacityRevision: number;
-  capacity: CapacityDocument;
-  focusFactor: number;
-  focusFactorSource: FocusFactorSource;
-  focusFactorOverride: FocusFactorOverride | null;
-  excludedFromCalibration: boolean;
-  calibrationSkipReason: string | null;
+  /** Per-team planning state, keyed by {@link Team.id}. */
+  teams: Record<string, TeamSprintEntry>;
   createdAt: number;
   updatedAt: number;
 }
 
 /** The `scpSprintDataJson` project extension property: all managed Sprints' app state. */
 export interface SprintDataDocument {
-  version: 2;
+  version: 3;
   /** Entries keyed by the native Sprint's id. */
   sprints: Record<string, SprintEntry>;
 }
