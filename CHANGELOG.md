@@ -2,6 +2,86 @@
 
 All notable changes to the Sprint Capacity Planner are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — Unreleased
+
+All settings belong to a team — teams are now fully separated.
+
+### Added
+
+- **Per-team boards and cadences.** Every planning setting — board, Sprint length,
+  hours per day, date policy, name template, effort fields, backlog query, Focus
+  Factor learning rate, reminder lead — moved from the project into each team
+  (`ProjectConfig` **v4** holds only `teams[]`), so the teams of one project can plan
+  on **different boards with different cadences** — or keep sharing a board. The
+  planner's team switcher now swaps the **whole context** (board, Sprint list,
+  cadence), and **"Create next Sprint" is per team**, on the team's own board with
+  the team's naming and dates. The settings form becomes per-team cards, each
+  carrying board / effort fields / schedule / naming / backlog / learning rate /
+  reminder; single-team projects keep the familiar flat layout bound to the only team.
+- **Per-team reminders.** `Team.reminderLeadDays` replaces the project-level
+  override: each team's lead wins over the app-level setting, **0 turns reminders
+  off for that team**, and teams absent from the config are never reminded. The
+  reminder workflow reads v2, v3 and v4 documents.
+- **The planner remembers your last team.** New `UserPrefs.lastTeamByProject`
+  (server-side, via the merge-updating `prefs` endpoints): a multi-team project
+  reopens on the team each user picked last.
+- **Team-scoped settings headers.** In a multi-team project every settings block
+  states its owner — "Agile board — Platform", "Members — Mobile" — so it is always
+  obvious whose setting is on screen, even scrolled mid-card (the labels follow
+  team renames live). New teams start from the first team's settings but with a
+  neutral `Sprint {sequence}` naming template.
+
+### Changed
+
+- **Sprint data re-keyed team-first** (storage model **v4**): a Sprint is managed
+  **per team** (`teams[teamId].sprints[nativeSprintId]`, each entry carrying its own
+  sequence, name/date snapshots, capacity and focus-factor state) because native
+  Sprint ids are only meaningful on the team's board. There is no lazy
+  materialization anymore — writing to a Sprint the team never registered is
+  `NOT_FOUND`; `sprint-register` seeds exactly **one** team (with a per-team
+  sequence) and `GET sprint-data` takes a `team` query parameter. Saving settings
+  still backfills capacity rows across each team's own Sprints, but a team added to
+  the config starts with **no** managed Sprints until it registers its first one
+  (v0.3.0 seeded new teams into the shared Sprints). Removed teams keep their
+  entries in storage, hidden from views, as before.
+- **Cross-team Sprint totals are gone.** With teams on separate boards there is no
+  meaningful all-teams total: `SprintView` is single-team (the team's slice plus
+  whole-Sprint aggregates over the issues on the **team's** board), and the "what
+  fits" banner compares the team's committed effort with the team's planned
+  capacity only.
+- **No backlog fallback.** `Team.backlogQuery` is a required per-team setting (the
+  v3 project-level query + per-team override pair is gone); an empty query disables
+  the team's backlog lane.
+- **Export/import moved to the v4 era.** Export bundles now carry `teams` (per-team
+  Sprint maps) instead of `sprints`; import still accepts v2/v3 `sprints` bundles
+  and migrates them on the way in, so export-before-upgrade backups stay restorable.
+- **Diagnostics are per team** — the manager view lists each team's managed Sprints.
+
+### Fixed
+
+- **Stale Sprint details after a team switch.** The Details form seeded its draft
+  once and kept showing the previous team's Sprint name/dates after switching
+  teams; it now remounts per team + Sprint.
+- **Demo/e2e seeding is deterministic again.** Reseeding a live install now wipes
+  the app's stored Sprint state first — previously per-team sequences kept growing
+  across reseeds, silently breaking the "fixed prepared data" guarantee.
+
+### Migration notes
+
+- **Existing v3 (and v2) data migrates automatically on read — nothing to do.** The
+  config migration copies every project-level setting into each team (a team's own
+  non-empty backlog override wins over the project query; the project-level reminder
+  override becomes each team's), and Sprint data is re-keyed team-first (a Sprint
+  two teams shared lands in both teams' maps; all v3 teams shared one board, so the
+  native Sprint ids remain valid for each team). Upgraded projects behave exactly as
+  before until someone edits a team. Migrated documents are persisted on the next
+  write, and the v2→v3→v4 chain works — an untouched v0.2.0 project upgrades in one
+  read.
+- **Concurrency is unchanged in nature:** one extension property, last-write-wins,
+  with the per-team `capacityRevision` guard and the client's verified capacity
+  writes still healing cross-team clobbers (teams write disjoint subtrees of the
+  same property).
+
 ## [0.3.0] — 2026-07-21
 
 Teams + per-project settings hardening.
@@ -310,6 +390,7 @@ Additional unfinished wiring: no API route sets the `scpCapacityManagers` group 
 - **Documentation** — [`README.md`](README.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`WORKFLOWS.md`](WORKFLOWS.md), [`DATA_MODEL.md`](DATA_MODEL.md), [`TESTING.md`](TESTING.md), and [`SECURITY.md`](SECURITY.md).
 
 [Unreleased]: https://github.com/ndkoval/yt-sprint-planner-plugin/compare/v0.3.0...HEAD
+[0.4.0]: https://github.com/ndkoval/yt-sprint-planner-plugin/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/ndkoval/yt-sprint-planner-plugin/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ndkoval/yt-sprint-planner-plugin/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/ndkoval/yt-sprint-planner-plugin/compare/v0.1.1...v0.1.2

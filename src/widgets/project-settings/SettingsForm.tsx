@@ -28,10 +28,16 @@ export interface SettingsFormProps {
   onClose?: () => void;
 }
 
-/** A fresh config. The backlog default is scoped to the project once its key is known. */
-function defaultConfig(projectKey: string | null): ProjectConfig {
+/**
+ * A fresh team carrying the FULL per-team configuration (config v4): board, effort
+ * fields, cadence, naming, backlog, learning rate. The backlog default is scoped to
+ * the project once its key is known.
+ */
+function defaultTeam(projectKey: string | null, id: string, name: string): Team {
   return {
-    version: 3,
+    id,
+    name,
+    participants: [],
     boardId: '',
     originalEffortField: 'Original Effort',
     currentEffortField: 'Current Effort',
@@ -42,8 +48,12 @@ function defaultConfig(projectKey: string | null): ProjectConfig {
     backlogQuery: projectKey !== null ? `project: ${projectKey} #Unresolved` : '#Unresolved',
     // How fast the Focus Factor learns from finished Sprints (see the explanation below).
     learningRate: 0.3,
-    teams: [{ id: DEFAULT_TEAM_ID, name: 'Team 1', participants: [] }],
   };
+}
+
+/** A fresh config: since v4 the project level holds only the team list. */
+function defaultConfig(projectKey: string | null): ProjectConfig {
+  return { version: 4, teams: [defaultTeam(projectKey, DEFAULT_TEAM_ID, 'Team 1')] };
 }
 
 interface Problem {
@@ -53,36 +63,6 @@ interface Problem {
 
 function validate(config: ProjectConfig): Problem[] {
   const problems: Problem[] = [];
-  if (config.boardId.trim().length === 0) {
-    problems.push({ path: 'boardId', message: 'Select an Agile board.' });
-  }
-  if (config.originalEffortField.trim().length === 0) {
-    problems.push({ path: 'originalEffortField', message: 'Select the Original Effort field.' });
-  }
-  if (config.currentEffortField.trim().length === 0) {
-    problems.push({ path: 'currentEffortField', message: 'Select the Current Effort field.' });
-  }
-  if (!(config.hoursPerDay > 0)) {
-    problems.push({ path: 'hoursPerDay', message: 'Hours per day must be greater than 0.' });
-  }
-  if (!(config.sprintLengthDays >= 1)) {
-    problems.push({ path: 'sprintLengthDays', message: 'Sprint length must be at least 1 day.' });
-  }
-  if (config.nameTemplate.trim().length === 0) {
-    problems.push({ path: 'nameTemplate', message: 'Naming template is required.' });
-  }
-  if (!(config.learningRate > 0 && config.learningRate <= 1)) {
-    problems.push({ path: 'learningRate', message: 'Learning rate must be between 0 and 1.' });
-  }
-  if (
-    config.reminderLeadDays !== undefined &&
-    !(Number.isInteger(config.reminderLeadDays) && config.reminderLeadDays >= 0 && config.reminderLeadDays <= 30)
-  ) {
-    problems.push({
-      path: 'reminderLeadDays',
-      message: 'Reminder lead must be a whole number of days between 0 and 30.',
-    });
-  }
   if (config.teams.length === 0) {
     problems.push({ path: 'teams', message: 'At least one team is required.' });
   }
@@ -97,6 +77,53 @@ function validate(config: ProjectConfig): Problem[] {
       problems.push({ path: `teams[${t}].name`, message: `Duplicate team name "${team.name}".` });
     }
     names.add(team.name.trim().toLowerCase());
+    // Every planning setting is the team's own (config v4).
+    if (team.boardId.trim().length === 0) {
+      problems.push({ path: `teams[${t}].boardId`, message: 'Select an Agile board.' });
+    }
+    if (team.originalEffortField.trim().length === 0) {
+      problems.push({
+        path: `teams[${t}].originalEffortField`,
+        message: 'Select the Original Effort field.',
+      });
+    }
+    if (team.currentEffortField.trim().length === 0) {
+      problems.push({
+        path: `teams[${t}].currentEffortField`,
+        message: 'Select the Current Effort field.',
+      });
+    }
+    if (!(team.hoursPerDay > 0)) {
+      problems.push({ path: `teams[${t}].hoursPerDay`, message: 'Hours per day must be greater than 0.' });
+    }
+    if (!(team.sprintLengthDays >= 1)) {
+      problems.push({
+        path: `teams[${t}].sprintLengthDays`,
+        message: 'Sprint length must be at least 1 day.',
+      });
+    }
+    if (team.nameTemplate.trim().length === 0) {
+      problems.push({ path: `teams[${t}].nameTemplate`, message: 'Naming template is required.' });
+    }
+    if (!(team.learningRate > 0 && team.learningRate <= 1)) {
+      problems.push({
+        path: `teams[${t}].learningRate`,
+        message: 'Learning rate must be between 0 and 1.',
+      });
+    }
+    if (
+      team.reminderLeadDays !== undefined &&
+      !(
+        Number.isInteger(team.reminderLeadDays) &&
+        team.reminderLeadDays >= 0 &&
+        team.reminderLeadDays <= 30
+      )
+    ) {
+      problems.push({
+        path: `teams[${t}].reminderLeadDays`,
+        message: 'Reminder lead must be a whole number of days between 0 and 30.',
+      });
+    }
     // The same person MAY be in several teams (shared specialist); only duplicates
     // within one team are invalid (addParticipant already prevents those).
     team.participants.forEach((p, i) => {
@@ -133,6 +160,13 @@ const sectionTitleStyle: React.CSSProperties = {
   letterSpacing: '0.04em',
 };
 
+const subTitleStyle: React.CSSProperties = {
+  margin: 'calc(var(--ring-unit) * 2) 0 calc(var(--ring-unit))',
+  font: 'var(--ring-font-smaller-lower)',
+  fontWeight: 'bold',
+  color: 'var(--ring-secondary-color)',
+};
+
 const fieldRow: React.CSSProperties = {
   display: 'flex',
   gap: 'calc(var(--ring-unit) * 2)',
@@ -162,7 +196,7 @@ interface FieldOption {
   disabled?: boolean;
 }
 
-/** §7 project settings form for the Sprint Capacity Planner. */
+/** §7 project settings form. Since config v4 EVERY setting belongs to a team. */
 export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.Element {
 
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -247,11 +281,6 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
     [client, rememberNames],
   );
 
-  const update = useCallback(<K extends keyof ProjectConfig>(key: K, value: ProjectConfig[K]): void => {
-    setSaved(false);
-    setConfig((prev) => ({ ...prev, [key]: value }));
-  }, []);
-
   const updateTeam = useCallback((index: number, patch: Partial<Team>): void => {
     setSaved(false);
     setConfig((prev) => ({
@@ -270,9 +299,23 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
       const used = new Set(prev.teams.map((t) => t.name.trim().toLowerCase()));
       let suffix = n;
       while (used.has(name.toLowerCase())) name = `Team ${(suffix += 1)}`;
-      return { ...prev, teams: [...prev.teams, { id, name, participants: [] }] };
+      // The new team starts from the FIRST team's settings (same board and cadence
+      // is the common case) — every field can then be changed independently. The
+      // naming template resets to the generic default: inheriting another team's
+      // branded template ("Platform {year}-S{sequence}") read as a contradiction.
+      const template = prev.teams[0];
+      const fresh = template
+        ? {
+            ...template,
+            id,
+            name,
+            participants: [] as Participant[],
+            nameTemplate: 'Sprint {sequence}',
+          }
+        : { ...defaultTeam(projectKey, id, name) };
+      return { ...prev, teams: [...prev.teams, fresh] };
     });
-  }, []);
+  }, [projectKey]);
 
   const removeTeam = useCallback((index: number): void => {
     setSaved(false);
@@ -395,7 +438,6 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
     label: b.usesSprints ? b.name : `${b.name} · sprints disabled on this board`,
     disabled: !b.usesSprints,
   }));
-  const selectedBoard = boardData.find((b) => b.key === config.boardId) ?? null;
 
   // Effort-field options from the project's custom fields. Period fields come first (the
   // effort fields are periods); the currently-configured value is always present as an
@@ -414,8 +456,6 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
     if (current && !opts.some((o) => o.key === current)) opts.unshift({ key: current, label: current });
     return opts;
   };
-  const origFieldOptions = fieldOptionsFor(config.originalEffortField);
-  const curFieldOptions = fieldOptionsFor(config.currentEffortField);
 
   const nameFor = (userId: string): string => namesById[userId] ?? userId;
   const multiTeam = config.teams.length > 1;
@@ -552,6 +592,210 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
     </>
   );
 
+  /** The team's display name for scoped headers (falls back before it's typed). */
+  const teamLabel = (team: Team, teamIndex: number): string =>
+    team.name.trim() || `Team ${teamIndex + 1}`;
+
+  /**
+   * The full per-team settings block (board, effort fields, schedule, naming,
+   * backlog, learning rate) — rendered inside each team card, and as the flat
+   * layout's sections for a single-team project. With several teams EVERY
+   * subsection header carries the team's name ("Agile board — Platform"), so it is
+   * always obvious WHOSE setting is on screen — even scrolled mid-card.
+   */
+  const teamSettingsFields = (team: Team, teamIndex: number): React.JSX.Element => {
+    const origFieldOptions = fieldOptionsFor(team.originalEffortField);
+    const curFieldOptions = fieldOptionsFor(team.currentEffortField);
+    const selectedBoard = boardData.find((b) => b.key === team.boardId) ?? null;
+    const prefix = `teams[${teamIndex}]`;
+    const scoped = (title: string): string =>
+      multiTeam ? `${title} — ${teamLabel(team, teamIndex)}` : title;
+    return (
+      <>
+        <div style={subTitleStyle}>{scoped('Agile board')}</div>
+        <Select
+          data={boardData}
+          selected={selectedBoard}
+          label="Select a board"
+          filter
+          onSelect={(item) => {
+            if (item !== null && typeof item.key === 'string') updateTeam(teamIndex, { boardId: item.key });
+          }}
+        />
+        {problemFor(`${prefix}.boardId`) !== null ? (
+          <p role="alert" style={{ color: 'var(--ring-error-color)', font: 'var(--ring-font-smaller)' }}>
+            {problemFor(`${prefix}.boardId`)}
+          </p>
+        ) : null}
+
+        <div style={subTitleStyle}>{scoped('Effort fields')}</div>
+        <div style={{ ...fieldRow, marginBottom: 'calc(var(--ring-unit))' }}>
+          <div style={fieldBox}>
+            <label style={{ ...helpTextStyle, display: 'block', marginBottom: 4 }}>
+              Original Effort field
+            </label>
+            <Select
+              data={origFieldOptions}
+              selected={origFieldOptions.find((o) => o.key === team.originalEffortField) ?? null}
+              label="Select a field"
+              filter
+              onSelect={(item) => {
+                if (item !== null && typeof item.key === 'string')
+                  updateTeam(teamIndex, { originalEffortField: item.key });
+              }}
+            />
+          </div>
+          <div style={fieldBox}>
+            <label style={{ ...helpTextStyle, display: 'block', marginBottom: 4 }}>
+              Current Effort field
+            </label>
+            <Select
+              data={curFieldOptions}
+              selected={curFieldOptions.find((o) => o.key === team.currentEffortField) ?? null}
+              label="Select a field"
+              filter
+              onSelect={(item) => {
+                if (item !== null && typeof item.key === 'string')
+                  updateTeam(teamIndex, { currentEffortField: item.key });
+              }}
+            />
+          </div>
+        </div>
+
+        <div style={subTitleStyle}>{scoped('Schedule')}</div>
+        <div style={{ ...fieldRow, marginBottom: 'calc(var(--ring-unit))' }}>
+          <div style={fieldBox}>
+            <Input
+              label="Hours per day"
+              type="number"
+              min={1}
+              step={0.5}
+              size={InputSize.M}
+              value={String(team.hoursPerDay)}
+              error={problemFor(`${prefix}.hoursPerDay`)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                updateTeam(teamIndex, { hoursPerDay: Number(e.target.value) })
+              }
+            />
+          </div>
+          <div style={fieldBox}>
+            <Input
+              label="Sprint length (days)"
+              type="number"
+              min={1}
+              step={1}
+              size={InputSize.M}
+              value={String(team.sprintLengthDays)}
+              error={problemFor(`${prefix}.sprintLengthDays`)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                updateTeam(teamIndex, { sprintLengthDays: Number(e.target.value) })
+              }
+            />
+          </div>
+          <div style={fieldBox}>
+            <Input
+              label="Availability reminder lead (days)"
+              type="number"
+              min={0}
+              max={30}
+              step={1}
+              size={InputSize.M}
+              value={team.reminderLeadDays === undefined ? '' : String(team.reminderLeadDays)}
+              placeholder="App default (3 unless changed)"
+              error={problemFor(`${prefix}.reminderLeadDays`)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                const raw = e.target.value.trim();
+                updateTeam(teamIndex, {
+                  reminderLeadDays: raw === '' ? undefined : Number(raw),
+                });
+              }}
+            />
+            <p style={{ ...helpTextStyle, margin: '4px 0 0' }}>
+              Days before a Sprint starts to remind members who kept the default
+              availability. 0 turns reminders off for this team; empty uses the app default.
+            </p>
+          </div>
+        </div>
+        <Input
+          label="Naming template (placeholders: {year} {sequence} {startDate} {finishDate})"
+          size={InputSize.L}
+          value={team.nameTemplate}
+          error={problemFor(`${prefix}.nameTemplate`)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            updateTeam(teamIndex, { nameTemplate: e.target.value })
+          }
+        />
+
+        <div style={subTitleStyle}>{scoped('Planning backlog')}</div>
+        <p style={{ ...helpTextStyle, marginTop: 0 }}>
+          A YouTrack search defining the backlog this team plans from. Issues already in the
+          Sprint are excluded automatically; leave empty to hide the backlog lane. Example:{' '}
+          <code>project: {keyExample} State: Open</code>.
+        </p>
+        <Input
+          label="Backlog search query"
+          size={InputSize.L}
+          value={team.backlogQuery}
+          placeholder={`project: ${keyExample} #Unresolved`}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            updateTeam(teamIndex, { backlogQuery: e.target.value })
+          }
+        />
+
+        <div style={subTitleStyle}>{scoped('Focus factor')}</div>
+        <div style={fieldBox}>
+          <Input
+            label="Learning rate (0–1)"
+            type="number"
+            min={0.05}
+            max={1}
+            step={0.05}
+            size={InputSize.M}
+            value={String(team.learningRate)}
+            error={problemFor(`${prefix}.learningRate`)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              updateTeam(teamIndex, { learningRate: Number(e.target.value) })
+            }
+          />
+        </div>
+      </>
+    );
+  };
+
+  const focusFactorExplainer = (
+    <div style={{ ...helpTextStyle, marginBottom: 'calc(var(--ring-unit) * 2)' }}>
+      <p style={{ marginTop: 0 }}>
+        The <strong>Focus factor</strong> is the share of raw capacity a team realistically
+        delivers (meetings, support and context-switching eat the rest). Planned capacity =
+        raw capacity × focus factor.
+      </p>
+      <p style={{ margin: 0 }}>
+        A brand-new team&rsquo;s first Sprint starts at <strong>75%</strong>. When a Sprint
+        finishes, the app measures its <em>observed</em> focus factor (completed original
+        effort ÷ raw capacity) and nudges the next Sprint&rsquo;s factor toward it:
+      </p>
+      <p
+        style={{
+          margin: 'calc(var(--ring-unit)) 0',
+          padding: 'calc(var(--ring-unit))',
+          background: 'var(--ring-secondary-background-color)',
+          borderRadius: 'var(--ring-border-radius)',
+          fontFamily: 'var(--ring-font-family-monospace, monospace)',
+        }}
+      >
+        next = previous + learningRate × (observed − previous)
+      </p>
+      <p style={{ margin: 0 }}>
+        <strong>Learning rate</strong> is how quickly it adapts: <em>0.1</em> reacts slowly and
+        stays stable across noisy Sprints; <em>0.5</em> tracks the latest Sprint closely.
+        {multiTeam
+          ? ' Each team calibrates independently from its own Sprints, with its own learning rate.'
+          : ''}{' '}
+        A manager can always override the factor on any individual Sprint.
+      </p>
+    </div>
+  );
+
   return (
     <div
       data-test="scp-settings"
@@ -585,207 +829,18 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
         </div>
       ) : null}
 
-      <section style={sectionStyle}>
-        <h2 style={sectionTitleStyle}>Agile board</h2>
-        <Select
-          data={boardData}
-          selected={selectedBoard}
-          label="Select a board"
-          filter
-          onSelect={(item) => {
-            if (item !== null && typeof item.key === 'string') update('boardId', item.key);
-          }}
-        />
-        {problemFor('boardId') !== null ? (
-          <p role="alert" style={{ color: 'var(--ring-error-color)', font: 'var(--ring-font-smaller)' }}>
-            {problemFor('boardId')}
-          </p>
-        ) : null}
-      </section>
-
-      <section style={sectionStyle}>
-        <h2 style={sectionTitleStyle}>Effort field mapping</h2>
-        <p style={{ ...helpTextStyle, marginTop: 0 }}>
-          Pick the period fields that hold each issue&rsquo;s planned effort (Original) and
-          remaining effort (Current). These drive the effort and &ldquo;what fits&rdquo; numbers.
-        </p>
-        <div style={fieldRow}>
-          <div style={fieldBox}>
-            <label style={{ ...helpTextStyle, display: 'block', marginBottom: 4 }}>
-              Original Effort field
-            </label>
-            <Select
-              data={origFieldOptions}
-              selected={origFieldOptions.find((o) => o.key === config.originalEffortField) ?? null}
-              label="Select a field"
-              filter
-              onSelect={(item) => {
-                if (item !== null && typeof item.key === 'string') update('originalEffortField', item.key);
-              }}
-            />
-          </div>
-          <div style={fieldBox}>
-            <label style={{ ...helpTextStyle, display: 'block', marginBottom: 4 }}>
-              Current Effort field
-            </label>
-            <Select
-              data={curFieldOptions}
-              selected={curFieldOptions.find((o) => o.key === config.currentEffortField) ?? null}
-              label="Select a field"
-              filter
-              onSelect={(item) => {
-                if (item !== null && typeof item.key === 'string') update('currentEffortField', item.key);
-              }}
-            />
-          </div>
-        </div>
-      </section>
-
-      <section style={sectionStyle}>
-        <h2 style={sectionTitleStyle}>Schedule</h2>
-        <div style={fieldRow}>
-          <div style={fieldBox}>
-            <Input
-              label="Hours per day"
-              type="number"
-              min={1}
-              step={0.5}
-              size={InputSize.M}
-              value={String(config.hoursPerDay)}
-              error={problemFor('hoursPerDay')}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                update('hoursPerDay', Number(e.target.value))
-              }
-            />
-          </div>
-          <div style={fieldBox}>
-            <Input
-              label="Sprint length (days)"
-              type="number"
-              min={1}
-              step={1}
-              size={InputSize.M}
-              value={String(config.sprintLengthDays)}
-              error={problemFor('sprintLengthDays')}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                update('sprintLengthDays', Number(e.target.value))
-              }
-            />
-          </div>
-          <div style={fieldBox}>
-            <Input
-              label="Availability reminder lead (days)"
-              type="number"
-              min={0}
-              max={30}
-              step={1}
-              size={InputSize.M}
-              value={config.reminderLeadDays === undefined ? '' : String(config.reminderLeadDays)}
-              placeholder="App default (3 unless changed)"
-              error={problemFor('reminderLeadDays')}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                const raw = e.target.value.trim();
-                update('reminderLeadDays', raw === '' ? undefined : Number(raw));
-              }}
-            />
-            <p style={{ ...helpTextStyle, margin: '4px 0 0' }}>
-              Days before a Sprint starts to remind participants who kept the default
-              availability. 0 turns reminders off for this project; empty uses the app default.
-            </p>
-          </div>
-        </div>
-        <Input
-          label="Naming template (placeholders: {year} {sequence} {startDate} {finishDate})"
-          size={InputSize.L}
-          value={config.nameTemplate}
-          error={problemFor('nameTemplate')}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            update('nameTemplate', e.target.value)
-          }
-        />
-      </section>
-
-      <section style={sectionStyle}>
-        <h2 style={sectionTitleStyle}>Planning backlog</h2>
-        <p style={{ ...helpTextStyle, marginTop: 0 }}>
-          A YouTrack search that defines the backlog you plan from — the pool of issues you can
-          drag into a Sprint on the planning board. Issues already in the Sprint are excluded
-          automatically. Leave empty to hide the backlog lane. Example:{' '}
-          <code>project: {keyExample} State: Open</code>.
-          {multiTeam ? ' Teams can override this query below.' : ''}
-        </p>
-        <Input
-          label="Backlog search query"
-          size={InputSize.L}
-          value={config.backlogQuery}
-          placeholder={`project: ${keyExample} #Unresolved`}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            update('backlogQuery', e.target.value)
-          }
-        />
-      </section>
-
-      <section style={sectionStyle}>
-        <h2 style={sectionTitleStyle}>Focus factor &amp; calibration</h2>
-        <div style={{ ...helpTextStyle, marginBottom: 'calc(var(--ring-unit) * 2)' }}>
-          <p style={{ marginTop: 0 }}>
-            The <strong>Focus factor</strong> is the share of raw capacity a team realistically
-            delivers (meetings, support and context-switching eat the rest). Planned capacity =
-            raw capacity × focus factor.
-          </p>
-          <p style={{ margin: 0 }}>
-            A brand-new team&rsquo;s first Sprint starts at <strong>75%</strong>. When a Sprint
-            finishes, the app measures its <em>observed</em> focus factor (completed original
-            effort ÷ raw capacity) and nudges the next Sprint&rsquo;s factor toward it:
-          </p>
-          <p
-            style={{
-              margin: 'calc(var(--ring-unit)) 0',
-              padding: 'calc(var(--ring-unit))',
-              background: 'var(--ring-secondary-background-color)',
-              borderRadius: 'var(--ring-border-radius)',
-              fontFamily: 'var(--ring-font-family-monospace, monospace)',
-            }}
-          >
-            next = previous + learningRate × (observed − previous)
-          </p>
-          <p style={{ margin: 0 }}>
-            <strong>Learning rate</strong> is how quickly it adapts: <em>0.1</em> reacts slowly and
-            stays stable across noisy Sprints; <em>0.5</em> tracks the latest Sprint closely.
-            {multiTeam
-              ? ' Each team calibrates independently from its own Sprints; the learning rate is shared.'
-              : ''}{' '}
-            A manager can always override the factor on any individual Sprint.
-          </p>
-        </div>
-        <div style={fieldBox}>
-          <Input
-            label="Learning rate (0–1)"
-            type="number"
-            min={0.05}
-            max={1}
-            step={0.05}
-            size={InputSize.M}
-            value={String(config.learningRate)}
-            error={problemFor('learningRate')}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              update('learningRate', Number(e.target.value))
-            }
-          />
-        </div>
-      </section>
-
       {multiTeam ? (
-        // Several small teams planning independently inside shared Sprints: each gets a
-        // named card with its own members and an optional backlog override.
+        // Fully separated teams: every setting — board, cadence, naming, backlog,
+        // effort fields, learning rate — lives on each team card.
         <section style={sectionStyle} data-test="scp-teams">
           <h2 style={sectionTitleStyle}>Teams</h2>
           <p style={{ ...helpTextStyle, marginTop: 0 }}>
-            All teams share the project&rsquo;s board and Sprint cadence; each team plans its own
-            capacity, focus factor and backlog. A person can be in only one team — someone shared
-            between squads joins one team with a lower allocation. Teams that need their own board
-            or a different Sprint length belong in separate projects.
+            Each team is configured independently: its own board, Sprint cadence and naming,
+            backlog, effort fields and focus-factor calibration. Teams may share a board or
+            use different ones. A person can be in several teams (a shared specialist) — they
+            get an independent capacity row in each.
           </p>
+          {focusFactorExplainer}
           {problemFor('teams') !== null ? (
             <p role="alert" style={{ color: 'var(--ring-error-color)', font: 'var(--ring-font-smaller)' }}>
               {problemFor('teams')}
@@ -818,20 +873,9 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
                   Remove team
                 </Button>
               </div>
-              <Input
-                label="Backlog query override — leave empty to use the project backlog"
-                size={InputSize.L}
-                value={team.backlogQuery ?? ''}
-                placeholder={`project: ${keyExample} Subsystem: {value} #Unresolved`}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                  updateTeam(teamIndex, {
-                    backlogQuery: e.target.value.length > 0 ? e.target.value : undefined,
-                  })
-                }
-              />
-              <div style={{ marginTop: 'calc(var(--ring-unit) * 2)' }}>
-                {participantsTable(team, teamIndex)}
-              </div>
+              {teamSettingsFields(team, teamIndex)}
+              <div style={subTitleStyle}>Members — {teamLabel(team, teamIndex)}</div>
+              {participantsTable(team, teamIndex)}
             </div>
           ))}
           <Button data-test="scp-add-team" onClick={addTeam} disabled={config.teams.length >= MAX_TEAMS}>
@@ -839,25 +883,32 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
           </Button>
         </section>
       ) : (
-        // Single team: exactly the familiar flat section — no cards, no name field, no
-        // per-team backlog. "Add another team" quietly unlocks the multi-team layout.
-        <section style={sectionStyle} data-test="scp-teams">
-          <h2 style={sectionTitleStyle}>Team</h2>
-          <p style={{ ...helpTextStyle, marginTop: 0 }}>
-            Add the people you plan capacity for. Everyone is full-time by default; set a lower
-            allocation for part-time members and their capacity scales down to match.
-          </p>
-          {config.teams[0] !== undefined ? participantsTable(config.teams[0], 0) : null}
-          <div style={{ marginTop: 'calc(var(--ring-unit) * 2)' }}>
-            <Button data-test="scp-add-team" onClick={addTeam}>
-              Add another team
-            </Button>
-            <p style={{ ...helpTextStyle, margin: '4px 0 0' }}>
-              For big projects: split planning into small teams, each with its own members,
-              focus factor and backlog filter, inside the same Sprints.
-            </p>
-          </div>
-        </section>
+        // Single team: the familiar flat layout, bound to the only team. "Add
+        // another team" unlocks the per-team cards.
+        <>
+          {config.teams[0] !== undefined ? (
+            <section style={sectionStyle} data-test="scp-teams">
+              <h2 style={sectionTitleStyle}>Planning setup</h2>
+              {teamSettingsFields(config.teams[0], 0)}
+              {focusFactorExplainer}
+              <div style={subTitleStyle}>Team</div>
+              <p style={{ ...helpTextStyle, marginTop: 0 }}>
+                Add the people you plan capacity for. Everyone is full-time by default; set a
+                lower allocation for part-time members and their capacity scales down to match.
+              </p>
+              {participantsTable(config.teams[0], 0)}
+              <div style={{ marginTop: 'calc(var(--ring-unit) * 2)' }}>
+                <Button data-test="scp-add-team" onClick={addTeam}>
+                  Add another team
+                </Button>
+                <p style={{ ...helpTextStyle, margin: '4px 0 0' }}>
+                  For big projects: split planning into fully independent small teams — each
+                  with its own board, Sprint cadence, backlog and members.
+                </p>
+              </div>
+            </section>
+          ) : null}
+        </>
       )}
 
       <section style={sectionStyle}>

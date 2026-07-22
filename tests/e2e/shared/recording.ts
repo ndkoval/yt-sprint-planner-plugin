@@ -96,6 +96,8 @@ export async function primeTitleCard(page: Page, title: string, subtitle: string
           (s as string) +
           '</div>';
         (document.body || document.documentElement).appendChild(el);
+        // Cover the scrollbar strip too (a fixed overlay leaves it exposed).
+        document.documentElement.style.overflow = 'hidden';
         return true;
       },
       [title, subtitle] as const,

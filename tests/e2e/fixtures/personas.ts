@@ -21,12 +21,18 @@ export interface Persona {
   storageState: string;
 }
 
+/** One seeded team: since config v4 the board/sprint identity is PER TEAM. */
+export interface SeededTeam {
+  id: string;
+  name: string;
+  boardId: string;
+  sprintId: string;
+  sprintName: string;
+}
+
 interface SeedManifest {
   baseUrl?: string;
-  projects?: Record<
-    string,
-    { key: string; projectId: string; boardId: string; sprintId: string; sprintName: string; teams: Array<{ id: string; name: string }> }
-  >;
+  projects?: Record<string, { key: string; projectId: string; teams: SeededTeam[] }>;
   personas?: Partial<Record<PersonaId, { login: string; password?: string }>>;
 }
 

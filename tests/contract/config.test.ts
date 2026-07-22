@@ -28,8 +28,9 @@ describe('getConfig', () => {
     const world = seedWorld();
     const res = getConfig(ctxFor(world, MANAGER.login));
     expect(res.configured).toBe(true);
-    expect(res.config?.boardId).toBe('board-1');
     expect(res.config?.teams.map((t) => t.id)).toEqual([TEAM_ID]);
+    // Since v4 every planning setting lives ON the team.
+    expect(res.config?.teams[0]?.boardId).toBe('board-1');
     expect(res.configRevision).toBe(1);
     expect(res.isManager).toBe(true);
     expect(res.isProjectLeader).toBe(false); // manager purely by permission
@@ -68,7 +69,7 @@ describe('getConfig', () => {
     expect(res.configured).toBe(false);
   });
 
-  it('migrates a stored v2 (pre-teams) config on read: participants become team-1, managersGroup is dropped', () => {
+  it('migrates a stored v2 (pre-teams) config on read: participants and every project-level setting become team-1, managersGroup is dropped', () => {
     const world = seedWorld({ configured: false });
     world.project.setProperty(
       'scpConfigJson',
@@ -97,22 +98,23 @@ describe('getConfig', () => {
     const res = getConfig(ctxFor(world, MEMBER.login));
     expect(res.configured).toBe(true);
     expect(res.configRevision).toBe(4);
-    expect(res.config?.version).toBe(3);
+    expect(res.config?.version).toBe(4);
+    // The chain runs v2→v3→v4: the flat participants become team-1, and the v3→v4
+    // step copies every shared planning setting INTO that team.
     expect(res.config?.teams).toEqual([
-      {
-        id: TEAM_ID,
-        name: 'Team 1',
+      defaultTeam({
         participants: [
           { userId: MEMBER.login, enabled: true, allocation: 1 },
           { userId: MEMBER_2.login, enabled: false, allocation: 0.5 },
         ],
-      },
+      }),
     ]);
     // The shipped legacy default template is rewritten to the generic default.
-    expect(res.config?.nameTemplate).toBe('Sprint {sequence}');
+    expect(res.config?.teams[0]?.nameTemplate).toBe('Sprint {sequence}');
     // The custom permission mechanism is gone: managersGroup is deliberately
-    // stripped (the doc would fail the strict parse otherwise).
-    expect(Object.keys(res.config!)).not.toContain('managersGroup');
+    // stripped (the doc would fail the strict parse otherwise), and no shared
+    // setting survives at the config level.
+    expect(Object.keys(res.config!).sort()).toEqual(['teams', 'version']);
   });
 });
 
@@ -153,104 +155,132 @@ describe('putConfig', () => {
     const world = seedWorld();
     const res = putConfig(ctxFor(world, MANAGER.login), {
       expectedRevision: 1,
-      config: defaultConfig({ hoursPerDay: 6 }),
+      config: defaultConfig({ teams: [defaultTeam({ hoursPerDay: 6 })] }),
     });
     expect(res.configRevision).toBe(2);
     const after = getConfig(ctxFor(world, MANAGER.login));
     expect(after.configRevision).toBe(2);
-    expect(after.config?.hoursPerDay).toBe(6);
+    expect(after.config?.teams[0]?.hoursPerDay).toBe(6);
   });
 
-  it('persists a version 3 document (teams model)', () => {
+  it('persists a version 4 document (per-team settings model)', () => {
     const world = seedWorld();
     putConfig(ctxFor(world, MANAGER.login), { expectedRevision: 1, config: defaultConfig() });
     const stored = JSON.parse(world.project.getProperty('scpConfigJson')!) as {
       version: number;
       config: { version: number; teams: unknown[] };
     };
-    expect(stored.version).toBe(3);
-    expect(stored.config.version).toBe(3);
+    expect(stored.version).toBe(4);
+    expect(stored.config.version).toBe(4);
     expect(stored.config.teams).toHaveLength(1);
   });
 
-  it('persists reminderLeadDays when set', () => {
+  it('persists a team-level reminderLeadDays when set', () => {
     const world = seedWorld();
     putConfig(ctxFor(world, MANAGER.login), {
       expectedRevision: 1,
-      config: defaultConfig({ reminderLeadDays: 0 }),
+      config: defaultConfig({ teams: [defaultTeam({ reminderLeadDays: 0 })] }),
     });
     const after = getConfig(ctxFor(world, MEMBER.login));
-    expect(after.config?.reminderLeadDays).toBe(0);
+    expect(after.config?.teams[0]?.reminderLeadDays).toBe(0);
   });
 });
 
 describe('putConfig — sprint reconciliation (roster changes apply immediately)', () => {
   const SPRINT = { id: '207-1', name: 'Sprint 1', start: '2026-01-05', finish: '2026-01-18' };
+  /** A Sprint on Beta's OWN board (teams may plan on different boards since v4). */
+  const BETA_SPRINT = { id: '208-1', name: 'Sprint 1', start: '2026-01-05', finish: '2026-01-11' };
 
-  it('seeds a TeamSprintEntry (capacityRevision 1) in every managed Sprint for a newly added team', () => {
+  it('does NOT seed sprints for a newly added team — the team registers its own', () => {
     const world = seedWorld();
     registerSprint(ctxFor(world, MANAGER.login), { sprint: SPRINT });
     putConfig(ctxFor(world, MANAGER.login), { expectedRevision: 1, config: twoTeamConfig() });
 
-    const entry = getSprintData(ctxFor(world, MEMBER.login)).sprints[SPRINT.id]!;
-    expect(Object.keys(entry.teams).sort()).toEqual([TEAM_ID, TEAM_2_ID]);
-    const added = entry.teams[TEAM_2_ID]!;
-    expect(added.capacityRevision).toBe(1);
-    expect(Object.keys(added.capacity.rows)).toEqual([MEMBER_2.login]);
-    expect(added.capacity.rows[MEMBER_2.login]!.defaultMinutes).toBe(4800);
-    expect(added.focusFactor).toBe(0.75);
-    expect(added.focusFactorSource).toBe('bootstrap');
-    expect(entry.teams[TEAM_ID]!.capacityRevision).toBe(1); // pre-existing team untouched
+    // No lazy materialization in v4: the brand-new team has NO managed Sprints…
+    expect(getSprintData(ctxFor(world, MEMBER_2.login), TEAM_2_ID).sprints).toEqual({});
+    // …and writes against a Sprint it never registered fail with NOT_FOUND.
+    try {
+      writeCapacity(ctxFor(world, MEMBER_2.login), {
+        sprintId: SPRINT.id,
+        teamId: TEAM_2_ID,
+        target: 'me',
+        expectedRevision: 1,
+        availableMinutes: 1000,
+      });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).code).toBe('NOT_FOUND');
+    }
+
+    // The new team gets its seeded entry by registering a Sprint itself.
+    const { entry } = registerSprint(ctxFor(world, MANAGER.login), {
+      teamId: TEAM_2_ID,
+      sprint: BETA_SPRINT,
+    });
+    expect(entry.capacityRevision).toBe(1);
+    expect(Object.keys(entry.capacity.rows)).toEqual([MEMBER_2.login]);
+    expect(entry.focusFactor).toBe(0.75);
+    expect(entry.focusFactorSource).toBe('bootstrap');
+
+    // The pre-existing team's entry stays untouched throughout.
+    const existing = getSprintData(ctxFor(world, MEMBER.login), TEAM_ID).sprints[SPRINT.id]!;
+    expect(existing.capacityRevision).toBe(1);
   });
 
   it('backfills capacity rows for newly added participants, bumping only that team', () => {
-    const oneMember = defaultConfig({
-      teams: [defaultTeam({ participants: [{ userId: MEMBER.login, enabled: true, allocation: 1 }] })],
-    });
-    const world = seedWorld({ config: oneMember });
-    registerSprint(ctxFor(world, MANAGER.login), { sprint: SPRINT });
+    // Alpha (team-1): MEMBER alone; Beta (team-2): MEMBER_2 alone, on its own board.
+    const world = seedWorld({ config: twoTeamConfig() });
+    registerSprint(ctxFor(world, MANAGER.login), { teamId: TEAM_ID, sprint: SPRINT });
+    registerSprint(ctxFor(world, MANAGER.login), { teamId: TEAM_2_ID, sprint: BETA_SPRINT });
     // Customize the existing row so we can prove reconciliation leaves it alone.
     writeCapacity(ctxFor(world, MEMBER.login), {
       sprintId: SPRINT.id,
+      teamId: TEAM_ID,
       target: 'me',
       expectedRevision: 1,
       availableMinutes: 1000,
     });
 
-    putConfig(ctxFor(world, MANAGER.login), { expectedRevision: 1, config: defaultConfig() });
+    // MEMBER_2 joins Alpha (Beta's roster is unchanged).
+    const grown = twoTeamConfig();
+    grown.teams[0]!.participants.push({ userId: MEMBER_2.login, enabled: true, allocation: 1 });
+    putConfig(ctxFor(world, MANAGER.login), { expectedRevision: 1, config: grown });
 
-    const team = getSprintData(ctxFor(world, MEMBER.login)).sprints[SPRINT.id]!.teams[TEAM_ID]!;
-    expect(Object.keys(team.capacity.rows).sort()).toEqual([MEMBER.login, MEMBER_2.login]);
-    expect(team.capacityRevision).toBe(3); // 1 seed + 1 member edit + 1 reconcile backfill
-    expect(team.capacity.rows[MEMBER.login]!.availableMinutes).toBe(1000); // customized row untouched
-    expect(team.capacity.rows[MEMBER_2.login]!.defaultMinutes).toBe(4800);
-    expect(team.capacity.rows[MEMBER_2.login]!.availableWasCustomized).toBe(false);
+    const alpha = getSprintData(ctxFor(world, MEMBER.login), TEAM_ID).sprints[SPRINT.id]!;
+    expect(Object.keys(alpha.capacity.rows).sort()).toEqual([MEMBER.login, MEMBER_2.login]);
+    expect(alpha.capacityRevision).toBe(3); // 1 seed + 1 member edit + 1 reconcile backfill
+    expect(alpha.capacity.rows[MEMBER.login]!.availableMinutes).toBe(1000); // customized row untouched
+    expect(alpha.capacity.rows[MEMBER_2.login]!.defaultMinutes).toBe(4800);
+    expect(alpha.capacity.rows[MEMBER_2.login]!.availableWasCustomized).toBe(false);
+
+    const beta = getSprintData(ctxFor(world, MEMBER_2.login), TEAM_2_ID).sprints[BETA_SPRINT.id]!;
+    expect(beta.capacityRevision).toBe(1); // the other team's Sprint is untouched
+    expect(Object.keys(beta.capacity.rows)).toEqual([MEMBER_2.login]);
   });
 
   it('does not bump revisions or rewrite sprint data when the roster is unchanged', () => {
     const world = seedWorld();
     registerSprint(ctxFor(world, MANAGER.login), { sprint: SPRINT });
-    const before = getSprintData(ctxFor(world, MEMBER.login)).sprints[SPRINT.id]!;
+    const before = getSprintData(ctxFor(world, MEMBER.login), TEAM_ID).sprints[SPRINT.id]!;
 
     const spy = vi.spyOn(world.project, 'setProperty');
-    // A non-roster change (hoursPerDay) must not touch existing sprint state.
+    // A non-roster change (the team's hoursPerDay) must not touch existing sprint state.
     putConfig(ctxFor(world, MANAGER.login), {
       expectedRevision: 1,
-      config: defaultConfig({ hoursPerDay: 6 }),
+      config: defaultConfig({ teams: [defaultTeam({ hoursPerDay: 6 })] }),
     });
     expect(spy.mock.calls.map(([name]) => name)).not.toContain('scpSprintDataJson');
     spy.mockRestore();
 
-    const after = getSprintData(ctxFor(world, MEMBER.login)).sprints[SPRINT.id]!;
+    const after = getSprintData(ctxFor(world, MEMBER.login), TEAM_ID).sprints[SPRINT.id]!;
     expect(after).toEqual(before); // same revisions, same updatedAt, same rows
   });
 
-  it('leaves orphaned team entries untouched when a team is removed from the config', () => {
+  it('leaves orphaned team entries untouched in storage when a team is removed from the config', () => {
     const world = seedWorld({ config: twoTeamConfig() });
-    registerSprint(ctxFor(world, MANAGER.login), { sprint: SPRINT });
-    const orphanBefore = getSprintData(ctxFor(world, MEMBER.login)).sprints[SPRINT.id]!.teams[
-      TEAM_2_ID
-    ]!;
+    registerSprint(ctxFor(world, MANAGER.login), { teamId: TEAM_ID, sprint: SPRINT });
+    registerSprint(ctxFor(world, MANAGER.login), { teamId: TEAM_2_ID, sprint: BETA_SPRINT });
+    const orphanBefore = getSprintData(ctxFor(world, MEMBER_2.login), TEAM_2_ID).sprints;
 
     putConfig(ctxFor(world, MANAGER.login), {
       expectedRevision: 1,
@@ -259,8 +289,19 @@ describe('putConfig — sprint reconciliation (roster changes apply immediately)
       }),
     });
 
-    const entry = getSprintData(ctxFor(world, MEMBER.login)).sprints[SPRINT.id]!;
-    expect(entry.teams[TEAM_2_ID]).toEqual(orphanBefore); // retained byte-for-byte
-    expect(entry.teams[TEAM_ID]!.capacityRevision).toBe(1);
+    // The removed team can no longer be addressed through the API…
+    try {
+      getSprintData(ctxFor(world, MEMBER_2.login), TEAM_2_ID);
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).code).toBe('VALIDATION_FAILED');
+    }
+    // …but its Sprint map is retained byte-for-byte in storage (non-destructive).
+    const stored = JSON.parse(world.project.getProperty('scpSprintDataJson')!) as {
+      teams: Record<string, { sprints: Record<string, unknown> }>;
+    };
+    expect(stored.teams[TEAM_2_ID]!.sprints).toEqual(orphanBefore);
+    // The remaining team is untouched by the removal.
+    expect(getSprintData(ctxFor(world, MEMBER.login), TEAM_ID).sprints[SPRINT.id]!.capacityRevision).toBe(1);
   });
 });

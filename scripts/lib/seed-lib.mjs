@@ -253,16 +253,26 @@ export async function ensureBoard(c, projectId, name, stateFieldId) {
   return b.id;
 }
 
-/** Remove all sprints on a board + all issues in a project (fresh demo/e2e state). */
-export async function cleanSlate(c, projectId, boardId, shortName) {
+/** Remove all sprints on one board (fresh demo/e2e state). */
+export async function cleanSlateBoard(c, boardId) {
   const board = await c.rest('GET', `/api/agiles/${boardId}`, undefined, { fields: 'sprints(id,name)' }).catch(() => null);
   for (const s of board?.sprints ?? []) {
     await c.rest('DELETE', `/api/agiles/${boardId}/sprints/${s.id}`).catch(() => {});
   }
+}
+
+/** Remove all issues in a project. */
+export async function deleteProjectIssues(c, shortName) {
   const issues = await c.rest('GET', '/api/issues', undefined, { query: `project: ${shortName}`, fields: 'id', $top: '400' }).catch(() => []);
   for (const i of Array.isArray(issues) ? issues : []) {
     await c.rest('DELETE', `/api/issues/${i.id}`).catch(() => {});
   }
+}
+
+/** Remove all sprints on a board + all issues in a project (fresh demo/e2e state). */
+export async function cleanSlate(c, projectId, boardId, shortName) {
+  await cleanSlateBoard(c, boardId);
+  await deleteProjectIssues(c, shortName);
 }
 
 export async function createIssue(c, projectId, summary) {
@@ -277,8 +287,9 @@ export async function command(c, query, issueIds, extra) {
 const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
 
 /**
- * Save the app's v3 project config (revision-aware, so re-runs don't conflict).
- * `config` must be a complete v3 ProjectConfig (version 3, teams[]).
+ * Save the app's project config (revision-aware, so re-runs don't conflict).
+ * `config` must be a complete v4 ProjectConfig ({version: 4, teams: [...]}) where
+ * every team carries its FULL settings (board, effort fields, cadence, backlog...).
  */
 export async function putAppConfig(c, projectKey, config) {
   const current = await c.app('GET', 'config', projectKey);
@@ -287,11 +298,12 @@ export async function putAppConfig(c, projectKey, config) {
 }
 
 /**
- * Create a native Sprint on the board (REST, dates as epoch-ms) and register it with
- * the app (seeds sequence + per-team capacity). Mirrors the widget's create-next flow.
- * startOffsetDays lets callers seed past sprints (negative offsets) for history.
+ * Create a native Sprint on the TEAM's board (REST, dates as epoch-ms) and register
+ * it with the app for that team (seeds the team's sequence + capacity). Mirrors the
+ * widget's create-next flow. startOffsetDays lets callers seed past sprints
+ * (negative offsets) for history. `teamId` may be omitted for single-team projects.
  */
-export async function createManagedSprint(c, projectKey, boardId, name, lengthDays, startOffsetDays = 0) {
+export async function createManagedSprint(c, projectKey, boardId, name, lengthDays, startOffsetDays = 0, teamId = undefined) {
   const DAY = 24 * 60 * 60 * 1000;
   const todayUtc = Date.UTC(
     new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate(),
@@ -300,6 +312,7 @@ export async function createManagedSprint(c, projectKey, boardId, name, lengthDa
   const finishMs = startMs + (lengthDays - 1) * DAY;
   const s = await c.rest('POST', `/api/agiles/${boardId}/sprints`, { name, start: startMs, finish: finishMs }, { fields: 'id,name' });
   const registered = await c.app('POST', 'sprint-register', projectKey, {
+    ...(teamId !== undefined ? { teamId } : {}),
     sprint: { id: s.id, name, start: isoDay(startMs), finish: isoDay(finishMs) },
   });
   return { id: s.id, name, start: isoDay(startMs), finish: isoDay(finishMs), entry: registered.entry };
@@ -333,12 +346,18 @@ export async function seedBacklogIssues(c, projectId, specs) {
 }
 
 /**
- * Provision one fully working project for the app:
- * project + team members + effort fields + fresh board + clean slate + v3 app config
- * + one managed sprint + sprint/backlog issues. Returns ids for follow-up steps.
+ * Provision one fully working project for the app (config v4 — every team fully
+ * separated): project + team members + effort fields + a fresh board PER TEAM +
+ * clean slate + v4 app config + one managed sprint per team + per-team sprint
+ * issues + project backlog issues. Returns per-team ids for follow-up steps.
  *
- * spec: { name, key, boardName, sprintName, projectMembers: [logins],
- *         config: (ids) => ProjectConfigV3, sprintIssues: [...], backlogIssues: [...] }
+ * spec: {
+ *   name, key, projectMembers: [logins],
+ *   teams: [{ id, boardName, sprintName, sprintLengthDays, startOffsetDays?,
+ *             sprintIssues: [{s,state,orig,cur,who|null}] }],
+ *   config: ({ projectId, boardIds }) => ProjectConfigV4   // boardIds keyed by team id
+ *   backlogIssues: [...],
+ * }
  */
 export async function seedProject(c, spec, log = () => {}) {
   const projectId = await ensureProject(c, spec.name, spec.key);
@@ -351,22 +370,50 @@ export async function seedProject(c, spec, log = () => {}) {
   await attachField(c, projectId, origId);
   await attachField(c, projectId, curId);
   const stateFieldId = await findStateFieldId(c, projectId);
-  const boardId = await ensureBoard(c, projectId, spec.boardName, stateFieldId);
-  log(`${spec.key}: project ${projectId}, board ${boardId}`);
-  await cleanSlate(c, projectId, boardId, spec.key);
 
-  const config = spec.config({ projectId, boardId });
+  // One board per team (teams may plan on different boards with different cadences).
+  const boardIds = {};
+  for (const team of spec.teams) {
+    boardIds[team.id] = await ensureBoard(c, projectId, team.boardName, stateFieldId);
+    await cleanSlateBoard(c, boardIds[team.id]);
+  }
+  await deleteProjectIssues(c, spec.key);
+  log(`${spec.key}: project ${projectId}, boards ${Object.values(boardIds).join(', ')}`);
+
+  // Wipe the app's accumulated Sprint state (wholesale replace with an empty v4
+  // bundle). Without this, reseeding on a live install keeps old per-team entries
+  // and Sprint SEQUENCES keep growing across reseeds — the "fixed prepared data"
+  // guarantee (and every "…-S2 comes next" assertion) silently breaks.
+  await c.app('POST', 'import', spec.key, {
+    bundle: { exportedAt: Date.now(), configRevision: 0, teams: {} },
+    dryRun: false,
+  }).catch(() => {});
+
+  const config = spec.config({ projectId, boardIds });
   await putAppConfig(c, spec.key, config);
   log(`${spec.key}: app config saved (${config.teams.length} team(s))`);
 
-  const sprint = await createManagedSprint(
-    c, spec.key, boardId, spec.sprintName, config.sprintLengthDays, spec.startOffsetDays ?? 0,
-  );
-  log(`${spec.key}: managed sprint ${sprint.id} ${sprint.name} ${sprint.start} -> ${sprint.finish}`);
+  const teams = [];
+  for (const team of spec.teams) {
+    const teamCfg = config.teams.find((t) => t.id === team.id);
+    const sprint = await createManagedSprint(
+      c, spec.key, boardIds[team.id], team.sprintName,
+      team.sprintLengthDays ?? teamCfg?.sprintLengthDays ?? 14,
+      team.startOffsetDays ?? 0, team.id,
+    );
+    log(`${spec.key}/${team.id}: managed sprint ${sprint.id} ${sprint.name} ${sprint.start} -> ${sprint.finish}`);
+    await seedSprintIssues(c, projectId, team.boardName, team.sprintName, team.sprintIssues ?? []);
+    teams.push({
+      teamId: team.id,
+      name: teamCfg?.name ?? team.id,
+      boardId: boardIds[team.id],
+      sprintId: sprint.id,
+      sprintName: sprint.name,
+    });
+  }
 
-  await seedSprintIssues(c, projectId, spec.boardName, spec.sprintName, spec.sprintIssues ?? []);
   await seedBacklogIssues(c, projectId, spec.backlogIssues ?? []);
-  log(`${spec.key}: ${spec.sprintIssues?.length ?? 0} sprint + ${spec.backlogIssues?.length ?? 0} backlog issues`);
+  log(`${spec.key}: ${spec.teams.reduce((n, t) => n + (t.sprintIssues?.length ?? 0), 0)} sprint + ${spec.backlogIssues?.length ?? 0} backlog issues`);
 
-  return { projectId, boardId, sprintId: sprint.id, sprintName: sprint.name };
+  return { projectId, teams };
 }

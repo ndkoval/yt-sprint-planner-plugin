@@ -45,12 +45,19 @@ export const CURSOR_INIT_SCRIPT = `
       card.appendChild(titleEl);
       card.appendChild(subEl);
       host.appendChild(card);
+      // Hide the page scrollbar while the card is up — a fixed inset:0 overlay does
+      // not cover the scrollbar layer, and the exposed strip shows on every reel.
+      document.documentElement.style.overflow = 'hidden';
       window.__closeTitleCard = () =>
         new Promise((resolve) => {
           const el = document.getElementById('__demo-titlecard');
           if (!el) { resolve(); return; }
           el.style.opacity = '0';
-          setTimeout(() => { el.remove(); resolve(); }, 420);
+          setTimeout(() => {
+            el.remove();
+            document.documentElement.style.overflow = '';
+            resolve();
+          }, 420);
         });
     } catch (_e) { /* ignore */ }
   };

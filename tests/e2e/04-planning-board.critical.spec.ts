@@ -4,9 +4,11 @@
  * REST, not just in the app's UI); dragging back must remove it again. The spec
  * restores the initial state so later specs see the seeded plan.
  */
-import { PROJECTS, approveAppRequest, dragTo, openPlanner } from './fixtures/app';
+import { PROJECTS, approveAppRequest, dragTo, openPlanner, teamOf } from './fixtures/app';
 import { boardSprints, hasAdminRest, sprintIssues } from './fixtures/rest';
 import { expect, hasInstance, test } from './fixtures/test';
+
+const ALPHA = teamOf(PROJECTS.one, 'Alpha');
 
 test.skip(!hasInstance, 'requires a real YouTrack instance (YT_TEST_BASE_URL)');
 
@@ -32,11 +34,11 @@ test.describe('planning board', () => {
     await expect(aliceLane.locator(`[data-issue="${issueKey}"]`)).toBeVisible({ timeout: 20_000 });
 
     if (hasAdminRest) {
-      // The REAL sprint gained the issue with the REAL assignee.
-      const sprints = await boardSprints(PROJECTS.one.boardId);
-      const sprint = sprints.find((s) => s.name === PROJECTS.one.sprintName);
+      // The REAL sprint on ALPHA's board gained the issue with the REAL assignee.
+      const sprints = await boardSprints(ALPHA.boardId);
+      const sprint = sprints.find((s) => s.name === ALPHA.sprintName);
       expect(sprint).toBeTruthy();
-      const issues = await sprintIssues(PROJECTS.one.boardId, sprint!.id);
+      const issues = await sprintIssues(ALPHA.boardId, sprint!.id);
       const planned = issues.find((i) => i.idReadable === issueKey);
       expect(planned).toBeTruthy();
       expect(planned!.assignee).toBe('alice');
@@ -55,9 +57,9 @@ test.describe('planning board', () => {
     ).toBeVisible({ timeout: 20_000 });
 
     if (hasAdminRest) {
-      const sprints = await boardSprints(PROJECTS.one.boardId);
-      const sprint = sprints.find((s) => s.name === PROJECTS.one.sprintName);
-      const issues = await sprintIssues(PROJECTS.one.boardId, sprint!.id);
+      const sprints = await boardSprints(ALPHA.boardId);
+      const sprint = sprints.find((s) => s.name === ALPHA.sprintName);
+      const issues = await sprintIssues(ALPHA.boardId, sprint!.id);
       expect(issues.find((i) => i.idReadable === issueKey)).toBeUndefined();
     }
   });
@@ -66,10 +68,10 @@ test.describe('planning board', () => {
     const frame = await openPlanner(managerPage, PROJECTS.one.key);
     await expect(frame.locator('[data-test="scp-fit-banner"]')).toBeVisible();
     await expect(frame.locator('[aria-label="Lane Unassigned · in sprint"]')).toBeVisible();
-    // The seeded shared unassigned work is on every team's board.
+    // The unassigned work seeded into ALPHA's own sprint counts against Alpha.
     await expect(
       frame.locator('[aria-label="Lane Unassigned · in sprint"]'),
-    ).toContainText('Shared unassigned work');
+    ).toContainText('Alpha unassigned work');
   });
 
   test('issue overlay opens wide, anchored, with cross-team assignees', async ({

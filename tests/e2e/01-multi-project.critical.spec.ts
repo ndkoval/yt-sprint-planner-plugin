@@ -4,7 +4,7 @@
  * each project ITS OWN configuration, and a change in one must never leak into the
  * other. Runs first (01-) so it sees the pristine seeded configs.
  */
-import { PROJECTS, openPlanner, openRingSelect, openSettings } from './fixtures/app';
+import { PROJECTS, openPlanner, openRingSelect, openSettings, teamOf } from './fixtures/app';
 import { appConfig, hasAdminRest } from './fixtures/rest';
 import { assertNoBlockingA11yViolations } from './fixtures/axe';
 import { expect, hasInstance, test } from './fixtures/test';
@@ -12,14 +12,25 @@ import { expect, hasInstance, test } from './fixtures/test';
 test.skip(!hasInstance, 'requires a real YouTrack instance (YT_TEST_BASE_URL)');
 
 test.describe('per-project settings independence', () => {
-  test('each project shows its own configuration', async ({ managerPage }, testInfo) => {
-    // Project One: 14-day sprints, 8h days, two teams, its own board.
+  test('each project (and each team) shows its own configuration', async ({ managerPage }, testInfo) => {
+    // Project One: TWO fully separated teams — since config v4 every setting lives
+    // on the team card: Alpha runs 14-day sprints on its own board, Beta 7-day
+    // sprints on ANOTHER board with its own template and backlog.
     const one = await openSettings(managerPage, PROJECTS.one.key);
-    await expect(one.getByLabel(/Sprint length/i)).toHaveValue('14');
-    await expect(one.getByLabel(/Hours per day/i)).toHaveValue('8');
-    await expect(one.getByLabel('Naming template', { exact: false })).toHaveValue('One S{sequence}');
-    await expect(one.getByLabel('Backlog search query')).toHaveValue('project: SCPE1 State: Open');
     await expect(one.locator('[data-test="scp-team-card"]')).toHaveCount(2);
+    const alphaCard = one.locator('[data-test="scp-team-card"][data-team="team-1"]');
+    await expect(alphaCard.getByLabel(/Sprint length/i)).toHaveValue('14');
+    await expect(alphaCard.getByLabel(/Hours per day/i)).toHaveValue('8');
+    await expect(alphaCard.getByLabel('Naming template', { exact: false })).toHaveValue('Alpha S{sequence}');
+    await expect(alphaCard.getByLabel('Backlog search query')).toHaveValue(
+      'project: SCPE1 State: Open Priority: Normal',
+    );
+    const betaCard = one.locator('[data-test="scp-team-card"][data-team="team-2"]');
+    await expect(betaCard.getByLabel(/Sprint length/i)).toHaveValue('7');
+    await expect(betaCard.getByLabel('Naming template', { exact: false })).toHaveValue('Beta S{sequence}');
+    await expect(betaCard.getByLabel('Backlog search query')).toHaveValue(
+      'project: SCPE1 State: Open Priority: Major',
+    );
 
     await assertNoBlockingA11yViolations(managerPage, testInfo, 'settings-one');
 
@@ -32,14 +43,20 @@ test.describe('per-project settings independence', () => {
     await expect(two.locator('[data-test="scp-team-card"]')).toHaveCount(0);
   });
 
-  test('each project plans its own sprints', async ({ managerPage }) => {
+  test('each project — and each team — plans its own sprints', async ({ managerPage }) => {
+    const alpha = teamOf(PROJECTS.one, 'Alpha');
+    const beta = teamOf(PROJECTS.one, 'Beta');
+    const twoTeam = teamOf(PROJECTS.two, 'Team 1');
+
+    // Alpha is the default team: its sprint is shown; Beta's (own board) is NOT.
     const one = await openPlanner(managerPage, PROJECTS.one.key);
-    await expect(one.locator('body')).toContainText(PROJECTS.one.sprintName);
-    await expect(one.locator('body')).not.toContainText(PROJECTS.two.sprintName);
+    await expect(one.locator('body')).toContainText(alpha.sprintName);
+    await expect(one.locator('body')).not.toContainText(beta.sprintName);
+    await expect(one.locator('body')).not.toContainText(twoTeam.sprintName);
 
     const two = await openPlanner(managerPage, PROJECTS.two.key);
-    await expect(two.locator('body')).toContainText(PROJECTS.two.sprintName);
-    await expect(two.locator('body')).not.toContainText(PROJECTS.one.sprintName);
+    await expect(two.locator('body')).toContainText(twoTeam.sprintName);
+    await expect(two.locator('body')).not.toContainText(alpha.sprintName);
   });
 
   test('editing one project leaves the other untouched', async ({ managerPage }) => {
@@ -51,12 +68,17 @@ test.describe('per-project settings independence', () => {
     await expect(two.getByText('Settings saved.')).toBeVisible();
 
     const one = await openSettings(managerPage, PROJECTS.one.key);
-    await expect(one.getByLabel('Naming template', { exact: false })).toHaveValue('One S{sequence}');
+    await expect(
+      one
+        .locator('[data-test="scp-team-card"][data-team="team-1"]')
+        .getByLabel('Naming template', { exact: false }),
+    ).toHaveValue('Alpha S{sequence}');
 
     if (hasAdminRest) {
-      // Backend agrees: the two stored configs differ exactly as edited.
-      expect((await appConfig(PROJECTS.two.key)).config?.nameTemplate).toBe('Two X{sequence}');
-      expect((await appConfig(PROJECTS.one.key)).config?.nameTemplate).toBe('One S{sequence}');
+      // Backend agrees: the two stored configs differ exactly as edited (the
+      // template is a TEAM setting since v4).
+      expect((await appConfig(PROJECTS.two.key)).config?.teams?.[0]?.nameTemplate).toBe('Two X{sequence}');
+      expect((await appConfig(PROJECTS.one.key)).config?.teams?.[0]?.nameTemplate).toBe('Alpha S{sequence}');
     }
 
     const twoAgain = await openSettings(managerPage, PROJECTS.two.key);
@@ -69,6 +91,7 @@ test.describe('per-project settings independence', () => {
     const two = await openSettings(managerPage, PROJECTS.two.key);
     const popup = await openRingSelect(two, 'Select a board');
     await expect(popup).toContainText('Capacity Two Board');
-    await expect(popup).not.toContainText('Capacity One Board');
+    await expect(popup).not.toContainText('Capacity One Alpha Board');
+    await expect(popup).not.toContainText('Capacity One Beta Board');
   });
 });

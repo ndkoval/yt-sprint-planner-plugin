@@ -14,9 +14,9 @@ import type {
   Participant,
   ProjectConfig,
   SprintDataDocument,
-  SprintEntry,
   Team,
-  TeamSprintEntry,
+  TeamSprint,
+  TeamSprints,
 } from './types.js';
 import { MAX_TEAMS } from './types.js';
 
@@ -71,19 +71,15 @@ export const participantSchema = z
   })
   .strict();
 
+/**
+ * A team owns its ENTIRE planning configuration (config v4) — board, cadence,
+ * naming, effort fields, backlog, learning rate, reminder lead.
+ */
 export const teamSchema = z
   .object({
     id: z.string().min(1, 'a team id is required'),
     name: z.string().trim().min(1, 'a team name is required'),
     participants: z.array(participantSchema),
-    // Optional per-team backlog OVERRIDE; empty/absent -> the project-level query.
-    backlogQuery: z.string().optional(),
-  })
-  .strict();
-
-export const projectConfigSchema = z
-  .object({
-    version: z.literal(3),
     boardId: z.string().min(1),
     originalEffortField: z.string().min(1),
     currentEffortField: z.string().min(1),
@@ -91,21 +87,27 @@ export const projectConfigSchema = z
     sprintLengthDays: z.number().int().positive(),
     datePolicy: z.literal('continuous'),
     nameTemplate: z.string().min(1),
-    // The backlog search query (may be empty to disable the backlog lane).
+    // The team's backlog search query (may be empty to disable the backlog lane).
     backlogQuery: z.string().default(''),
     learningRate: z.number().gt(0).lte(1),
+    // Per-team reminder override; 0 disables reminders for this team.
+    reminderLeadDays: z.number().int().min(0).max(30).optional(),
+  })
+  .strict();
+
+export const projectConfigSchema = z
+  .object({
+    version: z.literal(4),
     teams: z
       .array(teamSchema)
       .min(1, 'at least one team is required')
       .max(MAX_TEAMS, `at most ${MAX_TEAMS} teams are supported`),
-    // Per-project reminder override; 0 disables reminders for this project.
-    reminderLeadDays: z.number().int().min(0).max(30).optional(),
   })
   .strict()
   .superRefine((config, ctx) => {
     // Team ids and names must be unique; the same PERSON may be in several teams
-    // (shared specialists) — their capacity is planned per team, and their issues
-    // count toward every team they belong to. Within one team a login is unique.
+    // (shared specialists) — their capacity is planned per team. Within one team a
+    // login is unique.
     const ids = new Set<string>();
     const names = new Set<string>();
     for (const [i, team] of config.teams.entries()) {
@@ -149,14 +151,18 @@ export const focusFactorSourceSchema = z.enum([
 
 export const configDocumentSchema = z
   .object({
-    version: z.literal(3),
+    version: z.literal(4),
     revision: z.number().int().min(0),
     config: projectConfigSchema,
   })
   .strict();
 
-export const teamSprintEntrySchema = z
+export const teamSprintSchema = z
   .object({
+    sequence: z.number().int().min(1),
+    name: z.string(),
+    start: isoDateSchema,
+    finish: isoDateSchema,
     capacityRevision: z.number().int().min(0),
     capacity: capacityDocumentSchema,
     focusFactor: z.number().min(0).max(1),
@@ -164,25 +170,21 @@ export const teamSprintEntrySchema = z
     focusFactorOverride: focusFactorOverrideSchema.nullable(),
     excludedFromCalibration: z.boolean(),
     calibrationSkipReason: z.string().nullable(),
-  })
-  .strict();
-
-export const sprintEntrySchema = z
-  .object({
-    sequence: z.number().int().min(1),
-    name: z.string(),
-    start: isoDateSchema,
-    finish: isoDateSchema,
-    teams: z.record(z.string().min(1), teamSprintEntrySchema),
     createdAt: z.number().int(),
     updatedAt: z.number().int(),
   })
   .strict();
 
+export const teamSprintsSchema = z
+  .object({
+    sprints: z.record(z.string(), teamSprintSchema),
+  })
+  .strict();
+
 export const sprintDataDocumentSchema = z
   .object({
-    version: z.literal(3),
-    sprints: z.record(z.string(), sprintEntrySchema),
+    version: z.literal(4),
+    teams: z.record(z.string().min(1), teamSprintsSchema),
   })
   .strict();
 
@@ -207,7 +209,10 @@ export const _typeChecks: [
   // by the team check above.
   AssignableTo<Omit<z.infer<typeof projectConfigSchema>, 'teams'>, Omit<ProjectConfig, 'teams'>>,
   AssignableTo<Omit<z.infer<typeof configDocumentSchema>, 'config'>, Omit<ConfigDocument, 'config'>>,
-  AssignableTo<Omit<z.infer<typeof teamSprintEntrySchema>, 'capacity'>, Omit<TeamSprintEntry, 'capacity'>>,
-  AssignableTo<Omit<z.infer<typeof sprintEntrySchema>, 'teams'>, Omit<SprintEntry, 'teams'>>,
-  AssignableTo<Omit<z.infer<typeof sprintDataDocumentSchema>, 'sprints'>, Omit<SprintDataDocument, 'sprints'>>,
+  AssignableTo<Omit<z.infer<typeof teamSprintSchema>, 'capacity'>, Omit<TeamSprint, 'capacity'>>,
+  AssignableTo<Omit<z.infer<typeof teamSprintsSchema>, 'sprints'>, Omit<TeamSprints, 'sprints'>>,
+  AssignableTo<
+    Omit<z.infer<typeof sprintDataDocumentSchema>, 'teams'>,
+    Omit<SprintDataDocument, 'teams'>
+  >,
 ] = [true, true, true, true, true, true, true, true, true, true];

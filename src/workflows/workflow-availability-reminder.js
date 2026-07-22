@@ -6,16 +6,18 @@
  * (their capacity row is still the untouched default). Reminders are informational
  * and never block.
  *
- * Lead window: the project config's `reminderLeadDays` (0 = reminders DISABLED for
- * the project) wins over the app-level setting; both default to 3 days.
+ * Lead window: since config v4 `reminderLeadDays` is a TEAM setting (0 = reminders
+ * DISABLED for the team) and wins over the app-level setting; v2/v3 documents carry
+ * a project-level override instead. Both default to 3 days.
  *
  * This is the app's only workflow rule. Sprint metrics are computed live by the
  * backend/widget on every read, so no on-change bookkeeping rules are needed.
  *
  * VERSION TOLERANCE: this rule reads the raw extension properties and must accept
- * BOTH v2 (one flat capacity per sprint) and v3 (per-team capacity) documents —
- * documents migrate lazily on the backend's next write, so a project nobody edits
- * after an upgrade keeps v2 JSON indefinitely.
+ * v2 (one flat capacity per sprint), v3 (per-team capacity inside shared sprint
+ * entries) AND v4 (per-team sprint maps) documents — documents migrate lazily on
+ * the backend's next write, so a project nobody edits after an upgrade keeps its
+ * old JSON indefinitely.
  *
  * SHAPE (follows the production-workflow conventions):
  *   - Daily cron at a staggered off-peak minute; scheduled rules never run more often.
@@ -58,9 +60,10 @@ const leadDaysOf = (value) => {
 };
 
 /**
- * All capacity-row maps of one sprint entry, tolerating both schema eras:
- * v3 keeps one capacity document per team under `entry.teams`; v2 kept a single
- * `entry.capacity` at the top level.
+ * All capacity-row maps of one sprint entry, tolerating every schema era:
+ * v4 keeps ONE capacity document at the entry's top level (the entry itself is
+ * per-team); v3 kept one per team under `entry.teams`; v2 kept a single flat
+ * `entry.capacity`.
  */
 const capacityRowMaps = (entry) => {
   const maps = [];
@@ -75,30 +78,79 @@ const capacityRowMaps = (entry) => {
   return maps;
 };
 
+/**
+ * Flatten a sprint-data document of ANY supported era into reminder units:
+ * `{ key, entry, rowMaps, leadDays }`. v4 units are per team (key `teamId/sprintId`,
+ * lead from the team's own config); v2/v3 units are per sprint (plain sprintId key,
+ * lead from the project-level override).
+ */
+const reminderUnits = (data, config, appLeadDays) => {
+  const units = [];
+  if (data.version === 4 && data.teams && typeof data.teams === 'object') {
+    const cfgTeams = {};
+    const cfgList =
+      config && config.config && Array.isArray(config.config.teams) ? config.config.teams : [];
+    cfgList.forEach((t) => {
+      if (t && typeof t.id === 'string') cfgTeams[t.id] = t;
+    });
+    Object.keys(data.teams).forEach((teamId) => {
+      const teamCfg = cfgTeams[teamId];
+      // Teams REMOVED from the config are retained in storage but never reminded.
+      if (!teamCfg) return;
+      const teamLead = leadDaysOf(teamCfg.reminderLeadDays);
+      const leadDays = teamLead !== null ? teamLead : appLeadDays;
+      const sprints = (data.teams[teamId] && data.teams[teamId].sprints) || {};
+      Object.keys(sprints).forEach((sprintId) => {
+        units.push({
+          key: teamId + '/' + sprintId,
+          entry: sprints[sprintId],
+          rowMaps: capacityRowMaps(sprints[sprintId]),
+          leadDays,
+        });
+      });
+    });
+    return units;
+  }
+  if ((data.version === 2 || data.version === 3) && data.sprints) {
+    const projectLead =
+      config && config.config ? leadDaysOf(config.config.reminderLeadDays) : null;
+    const leadDays = projectLead !== null ? projectLead : appLeadDays;
+    Object.keys(data.sprints).forEach((sprintId) => {
+      units.push({
+        key: sprintId,
+        entry: data.sprints[sprintId],
+        rowMaps: capacityRowMaps(data.sprints[sprintId]),
+        leadDays,
+      });
+    });
+  }
+  return units;
+};
+
 /** Send reminders for every upcoming Sprint of one project. Returns quietly on error. */
 const remindForProject = (project, appLeadDays, nowMs) => {
   const props = project.extensionProperties;
   const data = parseJson(props.scpSprintDataJson);
-  if (!data || (data.version !== 2 && data.version !== 3) || !data.sprints) return;
-
-  // The project config's reminderLeadDays overrides the app setting; 0 disables.
+  if (!data) return;
   const config = parseJson(props.scpConfigJson);
-  const projectLead = config && config.config ? leadDaysOf(config.config.reminderLeadDays) : null;
-  const leadDays = projectLead !== null ? projectLead : appLeadDays;
-  if (leadDays === 0) return;
+  const units = reminderUnits(data, config, appLeadDays);
+  if (units.length === 0) return;
 
   const state = parseJson(props.scpReminderStateJson) || { version: 1, remindedOn: {} };
   const today = isoDay(nowMs);
   let stateChanged = false;
+  const entryByKey = {};
 
-  Object.keys(data.sprints).forEach((sprintId) => {
-    const entry = data.sprints[sprintId];
+  units.forEach((unit) => {
+    const entry = unit.entry;
     if (!entry || typeof entry.start !== 'string') return;
+    entryByKey[unit.key] = entry;
+    if (unit.leadDays === 0) return; // reminders disabled for this team/project
     const startMs = dayToMs(entry.start);
-    const upcoming = startMs >= nowMs && startMs <= nowMs + leadDays * MS_PER_DAY;
-    if (!upcoming || state.remindedOn[sprintId] === today) return;
+    const upcoming = startMs >= nowMs && startMs <= nowMs + unit.leadDays * MS_PER_DAY;
+    if (!upcoming || state.remindedOn[unit.key] === today) return;
 
-    capacityRowMaps(entry).forEach((rows) => {
+    unit.rowMaps.forEach((rows) => {
       Object.keys(rows).forEach((login) => {
         const row = rows[login];
         if (!row || row.availableWasCustomized === true) return;
@@ -107,22 +159,22 @@ const remindForProject = (project, appLeadDays, nowMs) => {
         user.notify(
           'Set your availability for ' + (entry.name || 'the upcoming sprint'),
           'You have not set your availability for "' +
-            (entry.name || sprintId) +
+            (entry.name || unit.key) +
             '" yet — it is still the default. Please review and adjust it if needed. ' +
             'This is an informational reminder.',
         );
       });
     });
 
-    state.remindedOn[sprintId] = today;
+    state.remindedOn[unit.key] = today;
     stateChanged = true;
   });
 
-  // Drop stamps for sprints that no longer exist or have started.
-  Object.keys(state.remindedOn).forEach((sprintId) => {
-    const entry = data.sprints[sprintId];
+  // Drop stamps for sprints that no longer exist or have started (any key era).
+  Object.keys(state.remindedOn).forEach((key) => {
+    const entry = entryByKey[key];
     if (!entry || dayToMs(entry.start) < nowMs) {
-      delete state.remindedOn[sprintId];
+      delete state.remindedOn[key];
       stateChanged = true;
     }
   });
@@ -153,4 +205,4 @@ exports.rule = entities.Issue.onSchedule({
 });
 
 // Exported for unit tests (loaded with a stubbed scripting API).
-exports._internals = { remindForProject, capacityRowMaps, leadDaysOf };
+exports._internals = { remindForProject, reminderUnits, capacityRowMaps, leadDaysOf };

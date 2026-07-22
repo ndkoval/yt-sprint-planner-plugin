@@ -1,32 +1,23 @@
 import React from 'react';
-import type { SprintView, TeamSprintView } from '../../shared/api';
+import type { TeamSprintView } from '../../shared/api';
 import { formatDays } from '../../shared/units';
 import { committedFitMinutes, remainingCapacityMinutes } from '../../domain/capacity/capacity';
 import { formatFocusFactor } from './format';
 import { MetricList, type Metric } from './metric-row';
 
 export interface CapacitySummaryProps {
-  /** The team the summary is scoped to (the selected team). */
+  /** The team the summary is scoped to (since v4 the team IS the Sprint's context). */
   team: TeamSprintView;
-  /** The whole Sprint, for the all-teams totals line. */
-  sprint: SprintView;
-  /** True when the project has several teams (adds the totals line + team label). */
-  multiTeam: boolean;
   hoursPerDay: number;
 }
 
 /**
- * §6.4 capacity summary for ONE team: Raw / Focus Factor / Planned / Remaining
+ * §6.4 capacity summary for the team: Raw / Focus Factor / Planned / Remaining
  * capacity, plus a "what fits" banner comparing the team's committed Original Effort
- * against its planned capacity. With several teams a compact all-teams totals line
- * keeps the Sprint-wide picture in view. Minute values render as days.
+ * against its planned capacity. Minute values render as days (the team's own
+ * hours-per-day). There are no cross-team totals: teams plan on separate boards.
  */
-export function CapacitySummary({
-  team,
-  sprint,
-  multiTeam,
-  hoursPerDay,
-}: CapacitySummaryProps): React.JSX.Element {
+export function CapacitySummary({ team, hoursPerDay }: CapacitySummaryProps): React.JSX.Element {
   const metrics: Metric[] = [
     { label: 'Raw capacity', value: formatDays(team.rawCapacityMinutes, hoursPerDay) },
     {
@@ -67,31 +58,12 @@ export function CapacitySummary({
     <section aria-label="Capacity summary" data-test="scp-capacity-summary">
       <MetricList metrics={metrics} />
       <div role="status" aria-live="polite" style={fitStyle}>
-        {multiTeam ? `${team.teamName}: ` : ''}Committed{' '}
-        {formatDays(team.originalEffortMinutes, hoursPerDay)} vs planned{' '}
+        Committed {formatDays(team.originalEffortMinutes, hoursPerDay)} vs planned{' '}
         {formatDays(team.plannedCapacityMinutes, hoursPerDay)} —{' '}
         {over
           ? `over by ${formatDays(-headroom, hoursPerDay)}`
           : `${formatDays(headroom, hoursPerDay)} headroom (it fits)`}
       </div>
-      {multiTeam ? (
-        <p
-          data-test="scp-all-teams-totals"
-          style={{
-            marginTop: 'calc(var(--ring-unit))',
-            marginBottom: 0,
-            font: 'var(--ring-font-smaller)',
-            color: 'var(--ring-secondary-color)',
-          }}
-        >
-          All teams: {formatDays(sprint.rawCapacityMinutes, hoursPerDay)} raw ·{' '}
-          {formatDays(sprint.plannedCapacityMinutes, hoursPerDay)} planned ·{' '}
-          {formatDays(sprint.originalEffortMinutes, hoursPerDay)} committed
-          {sprint.unassignedEffort.originalEffortMinutes > 0
-            ? ` (${formatDays(sprint.unassignedEffort.originalEffortMinutes, hoursPerDay)} unassigned)`
-            : ''}
-        </p>
-      ) : null}
     </section>
   );
 }

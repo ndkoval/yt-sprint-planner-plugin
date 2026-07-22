@@ -7,30 +7,37 @@
  * data-test="scp-settings"); empty/error states render distinctive text instead.
  */
 import type { Frame, Page } from '@playwright/test';
-import { seedManifest } from './personas';
+import { seedManifest, type SeededTeam } from './personas';
 
-/** The two seeded e2e projects (see scripts/seed-e2e.mjs). */
+/**
+ * The two seeded e2e projects (see scripts/seed-e2e.mjs). Since config v4 each
+ * TEAM owns its board/sprint — the identities live on the team entries.
+ */
 export const PROJECTS = {
   one: seedManifest.projects?.one ?? {
     key: 'SCPE1',
     projectId: '',
-    boardId: '',
-    sprintId: '',
-    sprintName: 'One S1',
     teams: [
-      { id: 'team-1', name: 'Alpha' },
-      { id: 'team-2', name: 'Beta' },
+      { id: 'team-1', name: 'Alpha', boardId: '', sprintId: '', sprintName: 'Alpha S1' },
+      { id: 'team-2', name: 'Beta', boardId: '', sprintId: '', sprintName: 'Beta S1' },
     ],
   },
   two: seedManifest.projects?.two ?? {
     key: 'SCPE2',
     projectId: '',
-    boardId: '',
-    sprintId: '',
-    sprintName: 'Two S1',
-    teams: [{ id: 'team-1', name: 'Team 1' }],
+    teams: [{ id: 'team-1', name: 'Team 1', boardId: '', sprintId: '', sprintName: 'Two S1' }],
   },
 };
+
+/** A seeded project's team by id or name (throws when the seed lacks it). */
+export function teamOf(
+  project: { teams: SeededTeam[] },
+  idOrName: string,
+): SeededTeam {
+  const team = project.teams.find((t) => t.id === idOrName || t.name === idOrName);
+  if (!team) throw new Error(`Seed manifest has no team "${idOrName}"`);
+  return team;
+}
 
 /** The project-settings tab that hosts the planner widget (project admins only). */
 export function plannerUrl(projectKey: string): string {

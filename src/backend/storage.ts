@@ -3,8 +3,10 @@
  * `scpConfigJson` and `scpSprintDataJson`), validating with the shared zod schemas.
  *
  * Older-versioned documents are migrated ON READ through the registered chains
- * (v2 → v3 wraps the flat single-team data into a default team) and persisted on the
- * next write — there is no write-on-read. Unreadable documents (malformed JSON,
+ * (v2 → v3 wraps the flat single-team data into a default team; v3 → v4 moves every
+ * project-level setting into each team and re-keys Sprint data team-first) and
+ * persisted on the next write — there is no write-on-read. Unreadable documents
+ * (malformed JSON,
  * failed validation, or v1 — REST-id keyed data with no offline upgrade path) are
  * treated as absent; see {@link ../domain/migrations/registry.ts}.
  */
@@ -79,8 +81,8 @@ export function saveConfigDocument(project: BackendProject, doc: ConfigDocument)
 export function loadSprintData(project: BackendProject): SprintDataDocument {
   return (
     normalizeSprintData(parseJson(project.getProperty(SPRINT_DATA_PROP))) ?? {
-      version: 3,
-      sprints: {},
+      version: 4,
+      teams: {},
     }
   );
 }

@@ -24,6 +24,7 @@ const teamId = z.string().min(1).optional();
 
 export const registerSprintRequestSchema = z
   .object({
+    teamId,
     sprint: z
       .object({
         id: z.string().min(1),
@@ -32,16 +33,12 @@ export const registerSprintRequestSchema = z
         finish: isoDateSchema,
       })
       .strict(),
-    teams: z
-      .record(
-        z.string().min(1),
-        z
-          .object({
-            focusFactor: z.number().min(0).max(1),
-            focusFactorSource: focusFactorSourceSchema,
-          })
-          .strict(),
-      )
+    seed: z
+      .object({
+        focusFactor: z.number().min(0).max(1),
+        focusFactorSource: focusFactorSourceSchema,
+      })
+      .strict()
       .optional(),
   })
   .strict();
@@ -92,14 +89,25 @@ export const setCalibrationRequestSchema = z
 
 export const savePrefsRequestSchema = z
   .object({
-    lastProjectKey: z.string().min(1).max(100).nullable(),
+    lastProjectKey: z.string().min(1).max(100).nullable().optional(),
+    lastTeam: z
+      .object({
+        projectKey: z.string().min(1).max(100),
+        teamId: z.string().min(1).max(100).nullable(),
+      })
+      .strict()
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine((b) => b.lastProjectKey !== undefined || b.lastTeam !== undefined, {
+    message: 'at least one of lastProjectKey, lastTeam is required',
+  });
 
 /**
- * Import envelope. The bundle's `config`/`sprints` are validated only structurally
- * here — the handler migrates them from any supported schema version (a pre-teams
- * v0.2.0 export must stay restorable) and then strict-validates the result.
+ * Import envelope. The bundle's documents are validated only structurally here —
+ * the handler migrates them from any supported schema era (v4 bundles carry
+ * `teams`, older exports carry `sprints`; a pre-teams v0.2.0 export must stay
+ * restorable) and then strict-validates the result.
  */
 export const importRequestSchema = z
   .object({
@@ -109,6 +117,7 @@ export const importRequestSchema = z
         configRevision: z.number().int().min(0),
         config: z.unknown(),
         sprints: z.unknown(),
+        teams: z.unknown(),
       })
       .strict(),
     dryRun: z.boolean(),

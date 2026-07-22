@@ -1,7 +1,8 @@
 /**
- * Team helpers. Teams are small groups planning independently WITHIN a project:
- * all teams share the project's board and Sprint cadence, but each team has its own
- * participants, capacity, Focus Factor calibration and backlog filter.
+ * Team helpers. Teams are small groups planning independently WITHIN a project.
+ * Since config v4 each team owns its ENTIRE planning configuration — board, Sprint
+ * cadence and naming, effort fields, backlog query, learning rate, reminder lead —
+ * so nothing is shared between teams except the project itself.
  *
  * Issue → team attribution derives from the issue's single-value Assignee: an issue
  * belongs to every team its assignee is a MEMBER of (enabled or not — enablement only
@@ -38,12 +39,11 @@ export function teamMemberLogins(team: Team): ReadonlySet<string> {
 }
 
 /**
- * The backlog search a team's board actually uses: the team's non-empty override,
- * else the project-level query. An empty result disables the backlog lane.
+ * The backlog search a team's board actually uses. Since v4 the query lives on the
+ * team itself; an empty result disables the backlog lane.
  */
-export function effectiveBacklogQuery(config: ProjectConfig, team: Team): string {
-  const override = (team.backlogQuery ?? '').trim();
-  return override.length > 0 ? override : (config.backlogQuery ?? '').trim();
+export function effectiveBacklogQuery(team: Team): string {
+  return (team.backlogQuery ?? '').trim();
 }
 
 /** Generate the next free team id ("team-N"). Ids are stable and never renamed. */

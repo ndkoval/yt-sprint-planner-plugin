@@ -4,11 +4,11 @@ import Select from '@jetbrains/ring-ui-built/components/select/select';
 import type {
   SprintSummary,
   SprintView,
-  TeamSprintView,
   PatchCapacityRequest,
   IssueView,
+  UserPrefs,
 } from '../../shared/api';
-import type { ProjectConfig } from '../../shared/types';
+import type { ProjectConfig, Team } from '../../shared/types';
 import { daysToMinutes } from '../../shared/units';
 import {
   firstSprintDates,
@@ -53,13 +53,13 @@ interface ConflictInfo {
  * the preview always matches what will actually be created.
  */
 function computePreview(
-  config: ProjectConfig,
+  team: Team,
   latest: { finish: string; sequence: number } | null,
 ): NextSprintPreview {
   const dates = latest
-    ? nextSprintDates(latest.finish, config.sprintLengthDays)
-    : firstSprintDates(utcMsToIso(Date.now()), config.sprintLengthDays);
-  const name = renderSprintName(config.nameTemplate, {
+    ? nextSprintDates(latest.finish, team.sprintLengthDays)
+    : firstSprintDates(utcMsToIso(Date.now()), team.sprintLengthDays);
+  const name = renderSprintName(team.nameTemplate, {
     year: Number(dates.start.slice(0, 4)),
     sequence: (latest?.sequence ?? 0) + 1,
     startDate: dates.start,
@@ -70,6 +70,11 @@ function computePreview(
 
 function defaultDays(availableMinutes: number, hoursPerDay: number): string {
   return String(Math.round((availableMinutes / (hoursPerDay * 60)) * 100) / 100);
+}
+
+/** The team remembered server-side for this project, if any. */
+function multiTeamRemembered(prefs: UserPrefs, projectKey: string): string | null {
+  return projectKey !== '' ? (prefs.lastTeamByProject?.[projectKey] ?? null) : null;
 }
 
 // The widget may run in a sandboxed srcdoc iframe with an opaque origin, where
@@ -113,7 +118,11 @@ const sectionTitleStyle: React.CSSProperties = {
   letterSpacing: '0.04em',
 };
 
-/** §6 main Sprint capacity screen (per-team planning inside shared Sprints). */
+/**
+ * §6 main Sprint capacity screen. Since config v4 the TEAM is the top-level context:
+ * each team owns its board, Sprint cadence and settings, so the team switcher swaps
+ * the whole planning context (sprint list included), not a slice of a shared Sprint.
+ */
 export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX.Element {
 
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -130,6 +139,9 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
   const [isManager, setIsManager] = useState(false);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  // Display names by login (user directory) — capacity rows only cover the SELECTED
+  // team, but the assignee picker offers every team's members.
+  const [namesByLogin, setNamesByLogin] = useState<Record<string, string>>({});
   // The settings UI is embedded here (managers only) so the app exposes a single
   // project tab rather than a separate "settings" tab. 'settings' shows the config form.
   const [view, setView] = useState<'planner' | 'settings'>('planner');
@@ -165,7 +177,6 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
   // planner, anchored at the card's document position.
   const [activeIssue, setActiveIssue] = useState<{ issue: IssueView; anchorY: number } | null>(null);
 
-  const hoursPerDay = config?.hoursPerDay ?? 8;
   const teams = config?.teams ?? [];
   const multiTeam = teams.length > 1;
 
@@ -174,17 +185,19 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
     () => teams.find((t) => t.id === selectedTeamId) ?? teams[0] ?? null,
     [teams, selectedTeamId],
   );
+  // Working-hours are a TEAM setting since v4 (teams may run different schedules).
+  const hoursPerDay = selectedTeam?.hoursPerDay ?? 8;
 
   const loadSprint = useCallback(
     async (id: string, clearDrafts: boolean, teamId?: string): Promise<void> => {
-      const view = await client.getSprint(id);
+      const view = await client.getSprint(id, teamId);
       setSprint(view);
       if (clearDrafts) setDrafts({});
       // Load the Sprint's issues + the team's backlog for the planning board
       // (best-effort; the planner still works if these fail, e.g. on a permission hiccup).
       try {
         const [sprintIssues, backlogIssues] = await Promise.all([
-          client.listSprintIssues(id),
+          client.listSprintIssues(id, teamId),
           client.listBacklog(id, teamId).catch(() => [] as IssueView[]),
         ]);
         setIssues(sprintIssues);
@@ -225,11 +238,13 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
         }
       }
       setNeedsProject(false);
-      const [configResponse, uid] = await Promise.all([
+      const [configResponse, uid, directory] = await Promise.all([
         client.getConfig(),
         client.resolveUserId(),
+        client.searchUsers('').catch(() => []),
       ]);
       setCurrentUserId(uid);
+      setNamesByLogin(Object.fromEntries(directory.map((u) => [u.login, u.name || u.login])));
       setIsManager(configResponse.isManager);
       if (!configResponse.configured || configResponse.config === null) {
         setConfigured(false);
@@ -242,20 +257,29 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
         typeof window !== 'undefined'
           ? new URLSearchParams(window.location.search)
           : new URLSearchParams();
-      // Deep-link support: ?team=<id> preselects a team (stale ids fall back to team 1).
+      // Team first: since v4 the team owns the board and cadence, so the SPRINT LIST
+      // depends on the team. ?team= deep-link wins; then the prior selection; then
+      // the server-side remembered team; then team 1.
       const configTeams = configResponse.config.teams;
       const requestedTeam = params.get('team');
       const priorTeamId = selectedTeamIdRef.current;
+      const rememberedTeamId = multiTeamRemembered(
+        await client.getPrefs().catch(() => ({})),
+        await client.projectKey().catch(() => ''),
+      );
       const nextTeam =
         (requestedTeam !== null && configTeams.find((t) => t.id === requestedTeam)) ||
         (priorTeamId !== null && configTeams.find((t) => t.id === priorTeamId)) ||
+        (rememberedTeamId !== null && configTeams.find((t) => t.id === rememberedTeamId)) ||
         configTeams[0] ||
         null;
       selectedTeamIdRef.current = nextTeam?.id ?? null;
       setSelectedTeamId(nextTeam?.id ?? null);
-      const list = await client.listSprints();
+      const list = await client.listSprints(nextTeam?.id);
       setSprints(list);
-      // Deep-link support: ?sprint=<id> preselects a Sprint on first load.
+      // Deep-link support: ?sprint=<id> preselects a Sprint on first load. Sprint
+      // ids are only meaningful within the team's board, so the prior selection is
+      // validated against THIS team's list.
       const requested = params.get('sprint');
       const preferred =
         (requested !== null && list.find((s) => s.id === requested)) ||
@@ -316,12 +340,28 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
       setConflict(null);
       setActionError(null);
       setDrafts({});
-      // The backlog is team-scoped (per-team override query) — reload it for the new team.
-      if (selectedId !== null) {
-        void loadSprint(selectedId, true, teamId).catch((err: unknown) => setActionError(err));
-      }
+      // Since v4 the team owns its board and cadence: switching teams means a NEW
+      // sprint list — the old selection's sprint id is meaningless on the new board.
+      void (async () => {
+        try {
+          const list = await client.listSprints(teamId);
+          setSprints(list);
+          const preferred = list.find((s) => !s.archived && s.managed) ?? list[0] ?? null;
+          selectedIdRef.current = preferred?.id ?? null;
+          setSelectedId(preferred?.id ?? null);
+          if (preferred) await loadSprint(preferred.id, true, teamId);
+          else setSprint(null);
+        } catch (err) {
+          setActionError(err);
+        }
+      })();
+      // Remember the choice server-side (best-effort) so the planner reopens here.
+      void client
+        .projectKey()
+        .then((key) => client.saveLastTeam(key, teamId))
+        .catch(() => {});
     },
-    [selectedId, loadSprint],
+    [client, loadSprint],
   );
 
   const withSaving = useCallback(
@@ -340,11 +380,8 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
     [],
   );
 
-  // The selected team's slice of the Sprint view (empty view when none).
-  const teamView = useMemo<TeamSprintView | null>(() => {
-    if (sprint === null || selectedTeam === null) return null;
-    return sprint.teams.find((t) => t.teamId === selectedTeam.id) ?? null;
-  }, [sprint, selectedTeam]);
+  // Since v4 the fetched view IS the selected team's view.
+  const teamView = sprint?.team ?? null;
 
   const patchCapacity = useCallback(
     async (userId: string, fields: Omit<PatchCapacityRequest, 'expectedRevision'>): Promise<void> => {
@@ -387,8 +424,8 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
     [teamView],
   );
 
-  // Split the Sprint's issues for the selected team's board: the team's own work
-  // (+ the shared Unassigned lane) versus work assigned outside this team.
+  // Split the team's Sprint issues: the team's own work (members + unassigned)
+  // versus work assigned to people OUTSIDE the team (visible but planned elsewhere).
   const { teamIssues, outsideIssues } = useMemo(() => {
     if (selectedTeam === null) return { teamIssues: issues, outsideIssues: [] as IssueView[] };
     const logins = teamMemberLogins(selectedTeam);
@@ -464,7 +501,7 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
       const sprintId = sprint.id;
       setSavingDetails(true);
       void client
-        .patchSprintDetails(sprintId, patch)
+        .patchSprintDetails(sprintId, patch, selectedTeam?.id)
         .then((updated) => {
           setSprint(updated);
           setActionError(null);
@@ -472,14 +509,14 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
         .catch((err: unknown) => setActionError(err))
         .finally(() => setSavingDetails(false));
     },
-    [sprint, client],
+    [sprint, selectedTeam?.id, client],
   );
 
   const createNextSprint = useCallback(
     (request: CreateNextSprintRequest): void => {
       setCreating(true);
       void client
-        .createNextSprint(request)
+        .createNextSprint(request, selectedTeam?.id)
         .then((created) => {
           setShowCreate(false);
           setActionError(null);
@@ -488,7 +525,7 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
         .catch((err: unknown) => setActionError(err))
         .finally(() => setCreating(false));
     },
-    [client, load, selectSprint],
+    [client, selectedTeam?.id, load, selectSprint],
   );
 
   const overrideFocusFactor = useCallback(
@@ -510,11 +547,11 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
   );
 
   const openBoard = useCallback((): void => {
-    if (config === null) return;
-    // Open the native agile board in a new tab (the widget's sandboxed iframe blocks top-frame
-    // navigation, so window.open is the reliable path). Confirmed on YouTrack 2025.3.
-    window.open(`/agiles/${encodeURIComponent(config.boardId)}`, '_blank', 'noopener');
-  }, [config]);
+    if (selectedTeam === null) return;
+    // Open the TEAM's native agile board in a new tab (the widget's sandboxed iframe
+    // blocks top-frame navigation, so window.open is the reliable path). Confirmed on 2025.3.
+    window.open(`/agiles/${encodeURIComponent(selectedTeam.boardId)}`, '_blank', 'noopener');
+  }, [selectedTeam]);
 
   // Plan an issue by dragging it on the board: pull into/out of the Sprint + set assignee.
   // The client returns the reconciled SprintView so per-person Load/Remaining refresh
@@ -527,11 +564,11 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
       setAssigningIssueIds((prev) => new Set(prev).add(issueId));
       setActionError(null);
       client
-        .planIssue(sprintId, issueId, target)
+        .planIssue(sprintId, issueId, target, teamId)
         .then(async (updated) => {
           setSprint(updated);
           const [iss, bl] = await Promise.all([
-            client.listSprintIssues(sprintId),
+            client.listSprintIssues(sprintId, teamId),
             client.listBacklog(sprintId, teamId).catch(() => backlog),
           ]);
           setIssues(iss);
@@ -672,15 +709,15 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
   const teamSelectData = teams.map((t) => ({ key: t.id, label: t.name, id: t.id }));
   const selectedTeamItem = teamSelectData.find((item) => item.key === selectedTeam?.id) ?? null;
   // Assignee candidates for the issue overlay: every team's members (grouped by team
-  // when several exist) so cross-team handoff is a two-click action.
+  // when several exist) so handing work to another team's person stays a two-click
+  // action even though teams now plan on separate boards. Display names come from
+  // the selected team's capacity rows, then the user directory (login otherwise).
+  const rowNames = sprint?.team.capacity.rows ?? {};
   const allTeamMembers = teams.flatMap((t) =>
     t.participants.map((p) => ({
       userId: p.userId,
       login: p.userId,
-      name:
-        sprint?.teams
-          .find((tv) => tv.teamId === t.id)
-          ?.capacity.rows[p.userId]?.displayNameSnapshot || p.userId,
+      name: rowNames[p.userId]?.displayNameSnapshot || namesByLogin[p.userId] || p.userId,
       team: multiTeam ? t.name : undefined,
     })),
   );
@@ -734,7 +771,7 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
             Create next Sprint
           </Button>
         ) : null}
-        <Button onClick={openBoard} disabled={config === null}>
+        <Button onClick={openBoard} disabled={selectedTeam === null}>
           Open board
         </Button>
         {isManager ? (
@@ -772,6 +809,10 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
           <section style={sectionStyle}>
             <h2 style={sectionTitleStyle}>Details</h2>
             <SprintDetails
+              // Remount when the sprint (or team) changes: the form seeds its draft
+              // from the sprint ONCE, and a stale draft after a team switch showed
+              // the previous team's sprint name/dates (caught on camera by review).
+              key={`${selectedTeamId ?? ''}:${sprint.id}`}
               sprint={sprint}
               editable={isManager}
               saving={savingDetails}
@@ -808,22 +849,9 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
               }))}
               teamName={multiTeam ? selectedTeam?.name ?? null : null}
               plannedCapacityMinutes={teamView?.plannedCapacityMinutes ?? 0}
-              sprintTotals={
-                multiTeam
-                  ? {
-                      plannedCapacityMinutes: sprint.plannedCapacityMinutes,
-                      committedMinutes: sprint.originalEffortMinutes,
-                    }
-                  : null
-              }
               hoursPerDay={hoursPerDay}
               isManager={isManager}
-              backlogConfigured={
-                (
-                  (selectedTeam?.backlogQuery ?? '').trim() ||
-                  (config?.backlogQuery ?? '').trim()
-                ).length > 0
-              }
+              backlogConfigured={(selectedTeam?.backlogQuery ?? '').trim().length > 0}
               busyIssueIds={assigningIssueIds}
               onPlan={planIssue}
               onOpenIssue={openIssue}
@@ -866,24 +894,14 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
                   </Button>
                 ) : null}
               </div>
-              <CapacitySummary
-                team={teamView}
-                sprint={sprint}
-                multiTeam={multiTeam}
-                hoursPerDay={hoursPerDay}
-              />
+              <CapacitySummary team={teamView} hoursPerDay={hoursPerDay} />
             </section>
           ) : null}
 
           {teamView !== null ? (
             <section style={sectionStyle}>
               <h2 style={sectionTitleStyle}>{scoped('Effort')}</h2>
-              <EffortSummary
-                team={teamView}
-                sprint={sprint}
-                multiTeam={multiTeam}
-                hoursPerDay={hoursPerDay}
-              />
+              <EffortSummary team={teamView} sprint={sprint} hoursPerDay={hoursPerDay} />
             </section>
           ) : null}
 
@@ -894,12 +912,12 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
         </>
       )}
 
-      {sprint !== null && config !== null ? (
+      {sprint !== null && selectedTeam !== null ? (
         <CreateNextSprintDialog
           show={showCreate}
-          preview={computePreview(config, latestManagedSprint)}
+          preview={computePreview(selectedTeam, latestManagedSprint)}
           carryOverCount={latestManagedSprint?.unresolvedIssueCount ?? 0}
-          multiTeam={multiTeam}
+          teamName={multiTeam ? selectedTeam.name : null}
           creating={creating}
           onCancel={() => setShowCreate(false)}
           onCreate={createNextSprint}

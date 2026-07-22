@@ -3,7 +3,7 @@
   "name": "sprint-capacity-planner",
   "title": "Sprint Capacity Planner",
   "description": "Capacity planning, computed metrics and a one-click next-Sprint button on top of native YouTrack Sprints. No service issues, no locks, no committed scope.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "vendor": {
     "name": "Nikita Koval",
     "url": "https://github.com/ndkoval/yt-sprint-planner-plugin"
@@ -18,7 +18,9 @@
       "indexPath": "widgets/project-tab/index.html",
       "extensionPoint": "PROJECT_SETTINGS",
       "description": "Sprint capacity planning for a project — planning plus manager configuration in one place.",
-      "permissions": ["READ_ISSUE"]
+      "permissions": [
+        "READ_ISSUE"
+      ]
     },
     {
       "key": "sprint-capacity-menu",
@@ -26,7 +28,9 @@
       "indexPath": "widgets/menu-planner/index.html",
       "extensionPoint": "MAIN_MENU_ITEM",
       "description": "The planner in the global sidebar: pick a project (remembered) and plan — a direct entry point for team members updating their availability. NOTE: the name must differ from the PROJECT_SETTINGS widget's — YouTrack resolves the settings-tab URL by app:WIDGET NAME, and a duplicate name breaks that tab.",
-      "permissions": ["READ_ISSUE"]
+      "permissions": [
+        "READ_ISSUE"
+      ]
     },
     {
       "key": "sprint-capacity-issue",
@@ -34,7 +38,9 @@
       "indexPath": "widgets/issue-planner/index.html",
       "extensionPoint": "ISSUE_OPTIONS_MENU_ITEM",
       "description": "Open the Sprint Capacity Planner for this issue's project (e.g. from a board card).",
-      "permissions": ["READ_ISSUE"]
+      "permissions": [
+        "READ_ISSUE"
+      ]
     },
     {
       "key": "sprint-capacity-dashboard",
@@ -42,7 +48,9 @@
       "indexPath": "widgets/dashboard-planner/index.html",
       "extensionPoint": "DASHBOARD_WIDGET",
       "description": "Sprint Capacity Planner widget for dashboards and the project overview.",
-      "permissions": ["READ_ISSUE"]
+      "permissions": [
+        "READ_ISSUE"
+      ]
     }
   ]
 }

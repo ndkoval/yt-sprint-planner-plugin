@@ -120,7 +120,12 @@ function callerOf(ctx: YtContext): BackendUser {
 // Endpoint wiring
 // ---------------------------------------------------------------------------
 
-type Handle = (rctx: handlers.RequestContext, body: unknown, correlationId: string) => unknown;
+type Handle = (
+  rctx: handlers.RequestContext,
+  body: unknown,
+  correlationId: string,
+  param: (name: string) => string | null,
+) => unknown;
 
 function endpoint(method: 'GET' | 'POST', path: string, handle: Handle) {
   return {
@@ -145,7 +150,9 @@ function endpoint(method: 'GET' | 'POST', path: string, handle: Handle) {
             body = null;
           }
         }
-        const data = handle({ env, user: callerOf(ctx), project }, body, correlationId);
+        const data = handle({ env, user: callerOf(ctx), project }, body, correlationId, (name) =>
+          ctx.request.getParameter(name),
+        );
         const envelope: BackendEnvelope<unknown> = { ok: true, data };
         ctx.response.json(envelope);
       } catch (err) {
@@ -210,7 +217,9 @@ export const httpHandler = {
     endpoint('POST', 'config', (rctx, body) =>
       handlers.putConfig(rctx, putConfigRequestSchema.parse(body)),
     ),
-    endpoint('GET', 'sprint-data', (rctx) => handlers.getSprintData(rctx)),
+    endpoint('GET', 'sprint-data', (rctx, _body, _cid, param) =>
+      handlers.getSprintData(rctx, param('team') ?? undefined),
+    ),
     endpoint('POST', 'sprint-register', (rctx, body) =>
       handlers.registerSprint(rctx, registerSprintRequestSchema.parse(body)),
     ),

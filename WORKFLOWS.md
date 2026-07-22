@@ -21,18 +21,18 @@ Once a day, for each upcoming managed Sprint whose start falls within the remind
 
 **Algorithm** (per project, via `remindForProject`):
 
-1. Parse `scpSprintDataJson` from `issue.project.extensionProperties`; bail unless it is a v2 **or** v3 document with a `sprints` map.
-2. Resolve the lead window: the project config's `reminderLeadDays` (from `scpConfigJson`) **wins** over the app-level `reminderLeadDays` setting ([`settings.json`](settings.json)); both default to 3. **`0` disables reminders for the project entirely.**
-3. For each Sprint entry whose `start` lies in `[now, now + leadDays]` and that has not been handled today: walk every capacity-row map, and for each row still at the default, `entities.User.findByLogin(login).notify(...)`.
-4. Stamp `remindedOn[sprintId] = today` in `scpReminderStateJson`; drop stamps for Sprints that no longer exist or have already started.
+1. Parse `scpSprintDataJson` from `issue.project.extensionProperties`; bail unless it is a v4 document with a `teams` map **or** a v2/v3 document with a `sprints` map.
+2. Flatten the document into **reminder units** (`reminderUnits`), each with its own lead window. **v4:** one unit per *team's* Sprint entry; the lead comes from that team's `reminderLeadDays` in `scpConfigJson` (config v4 makes it a **team** setting), falling back to the app-level `reminderLeadDays` setting ([`settings.json`](settings.json)). A team **absent from the config** (removed; entries are retained in storage) is skipped entirely. **v2/v3:** one unit per Sprint; the project-level `reminderLeadDays` in `scpConfigJson` wins over the app setting. Both default to 3. **`0` disables reminders** — for that *team* in v4, for the whole project in v2/v3.
+3. For each unit whose `start` lies in `[now, now + leadDays]` and that has not been handled today: walk every capacity-row map, and for each row still at the default, `entities.User.findByLogin(login).notify(...)`.
+4. Stamp `remindedOn[key] = today` in `scpReminderStateJson` — the key is **`teamId/sprintId`** for v4 units, a plain **`sprintId`** for v2/v3; drop stamps whose unit no longer exists or has already started (any key era, so leftover plain-`sprintId` stamps are pruned once a document migrates to v4).
 
 ### Self-limiting stamp design
 
 `onSchedule` rules run **per matching issue**, but all app state is project-scoped. So the **first** matching issue of a project performs the *whole project's* reminder pass and writes the per-day stamp to `scpReminderStateJson`; every other issue that day short-circuits on the stamp. One issue is enough to reach the project's extension properties, and no issue-level guard is needed.
 
-### Version tolerance (v2 AND v3)
+### Version tolerance (v2, v3 AND v4)
 
-The rule reads the **raw** extension-property JSON — it does not go through the backend's migration path. Because documents migrate **lazily** (on the backend's next write, see [`DATA_MODEL.md`](DATA_MODEL.md)), a project nobody edits after the v0.3.0 upgrade keeps v2 JSON indefinitely. `capacityRowMaps(entry)` therefore accepts both eras: v3 keeps one capacity document per team under `entry.teams`; v2 kept a single `entry.capacity` at the top level.
+The rule reads the **raw** extension-property JSON — it does not go through the backend's migration path. Because documents migrate **lazily** (on the backend's next write, see [`DATA_MODEL.md`](DATA_MODEL.md)), a project nobody edits after an upgrade keeps its old JSON indefinitely. `reminderUnits(data, config, appLeadDays)` therefore flattens every supported era into uniform units, and `capacityRowMaps(entry)` accepts all three entry shapes: v4 keeps **one** capacity document at the entry's top level (the entry itself is per-team, under `data.teams[teamId].sprints`); v3 kept one per team under `entry.teams` inside shared entries; v2 kept a single flat `entry.capacity`.
 
 ### Platform caveat
 
@@ -40,4 +40,4 @@ The rule only fires in projects that have at least one issue matching `#Unresolv
 
 ### Testing
 
-The module exports `_internals` (`remindForProject`, `capacityRowMaps`, `leadDaysOf`) so [`tests/unit/workflow-reminder.test.ts`](tests/unit/workflow-reminder.test.ts) can drive it with a stubbed scripting API — both document eras, the lead-day override/disable logic, and the stamp lifecycle are covered without an instance.
+The module exports `_internals` (`remindForProject`, `reminderUnits`, `capacityRowMaps`, `leadDaysOf`) so [`tests/unit/workflow-reminder.test.ts`](tests/unit/workflow-reminder.test.ts) can drive it with a stubbed scripting API — all three document eras, the per-team vs. project-level lead override/disable logic, removed-team skipping, and the stamp lifecycle across both key eras are covered without an instance.

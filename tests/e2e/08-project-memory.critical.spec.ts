@@ -3,7 +3,7 @@
  * server-side in the `scpPrefsJson` User extension property (the sandboxed widget
  * iframe has no reliable localStorage), so it survives new sessions and browsers.
  */
-import { MENU_PLANNER_URL, PROJECTS, openPlannerViaMenu, plannerFrame } from './fixtures/app';
+import { MENU_PLANNER_URL, PROJECTS, openPlannerViaMenu, plannerFrame, teamOf } from './fixtures/app';
 import { expect, hasInstance, test } from './fixtures/test';
 
 test.skip(!hasInstance, 'requires a real YouTrack instance (YT_TEST_BASE_URL)');
@@ -16,7 +16,9 @@ test('the menu planner remembers the last-picked project per user', async ({ bob
   await bobPage.goto(MENU_PLANNER_URL, { waitUntil: 'domcontentloaded' });
   const frame = await plannerFrame(bobPage);
   await frame.locator('[data-test="scp-ready"]').waitFor({ state: 'visible', timeout: 30_000 });
-  await expect(frame.locator('[data-test="scp-ready"]')).toContainText(PROJECTS.two.sprintName);
+  await expect(frame.locator('[data-test="scp-ready"]')).toContainText(
+    teamOf(PROJECTS.two, 'Team 1').sprintName,
+  );
 
   // "Switch project" clears the preference and reopens the picker…
   await frame.getByRole('button', { name: 'Switch project' }).click();

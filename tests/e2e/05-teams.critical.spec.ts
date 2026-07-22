@@ -1,10 +1,12 @@
 /**
  * Multi-team planning inside one project (SCPE1: Alpha + Beta), the heart of the
- * small-teams feature: a team switcher scopes capacity/board/summary to one team;
- * teams plan independently (capacity edits and focus-factor overrides in one team
- * never move the other); single-team projects (SCPE2) see no team chrome at all.
+ * small-teams feature. Since config v4 the teams are FULLY separated: each owns its
+ * board, cadence and settings, so the team switcher swaps the whole planning context
+ * (sprint list included); teams plan independently (capacity edits and focus-factor
+ * overrides in one team never move the other); single-team projects (SCPE2) see no
+ * team chrome at all.
  */
-import { PROJECTS, openPlanner, openRingSelect, openSettings } from './fixtures/app';
+import { PROJECTS, openPlanner, openRingSelect, openSettings, teamOf } from './fixtures/app';
 import { expect, hasInstance, test } from './fixtures/test';
 
 test.skip(!hasInstance, 'requires a real YouTrack instance (YT_TEST_BASE_URL)');
@@ -18,21 +20,31 @@ async function switchTeam(
 }
 
 test.describe('teams', () => {
-  test('team switcher scopes the planner to one team', async ({ managerPage }) => {
+  test('team switcher swaps the whole planning context (board + sprints)', async ({
+    managerPage,
+  }) => {
+    const alpha = teamOf(PROJECTS.one, 'Alpha');
+    const beta = teamOf(PROJECTS.one, 'Beta');
     const frame = await openPlanner(managerPage, PROJECTS.one.key);
-    // Default team is Alpha: its members are in the capacity table, Beta's are not.
+    // Default team is Alpha: its members are in the capacity table, Beta's are not,
+    // and the selected Sprint is ALPHA's (each team has its own board since v4).
     await expect(frame.locator('[data-test="scp-team-select"]')).toBeVisible();
+    await expect(frame.locator('[data-test="scp-ready"]')).toContainText(alpha.sprintName);
     await expect(frame.locator('[data-test="scp-capacity-section"]')).toContainText('Capacity — Alpha');
     await expect(frame.getByLabel(/Available capacity in days for Alice/i)).toBeVisible();
     await expect(frame.getByLabel(/Available capacity in days for Bob/i)).toHaveCount(0);
-    // Alpha's board: lanes for Alpha, Beta's assigned work only as the outside strip.
+    // Alpha's board: lanes for Alpha; work assigned to a non-member (bob) shows only
+    // in the outside strip.
     await expect(frame.locator('[aria-label="Lane Alice Smith"]')).toBeVisible();
     await expect(frame.locator('[aria-label="Lane Bob Jones"]')).toHaveCount(0);
     await expect(frame.locator('[data-test="scp-outside-team"]')).toContainText('Assigned outside this team');
     await expect(frame.locator('[data-test="scp-fit-banner"]')).toContainText('Alpha:');
-    await expect(frame.locator('[data-test="scp-fit-banner"]')).toContainText('Sprint:');
 
+    // Switching teams lands on BETA's OWN board and sprint — a different context,
+    // not a re-slice of the same sprint.
     await switchTeam(frame, 'Beta');
+    await expect(frame.locator('[data-test="scp-ready"]')).toContainText(beta.sprintName);
+    await expect(frame.locator('[data-test="scp-ready"]')).not.toContainText(alpha.sprintName);
     await expect(frame.locator('[data-test="scp-capacity-section"]')).toContainText('Capacity — Beta');
     await expect(frame.getByLabel(/Available capacity in days for Bob/i)).toBeVisible();
     await expect(frame.getByLabel(/Available capacity in days for Alice/i)).toHaveCount(0);
@@ -45,7 +57,8 @@ test.describe('teams', () => {
   }) => {
     const frame = await openPlanner(managerPage, PROJECTS.one.key);
 
-    // Bob (Beta, 50% of a 14-day sprint = 5d default) gets a custom availability.
+    // Bob (Beta, 50% of Beta's OWN 7-day sprint = 2.5d default) gets a custom
+    // availability.
     await switchTeam(frame, 'Beta');
     const bob = frame.getByLabel(/Available capacity in days for Bob/i);
     await bob.fill('4');
@@ -70,11 +83,21 @@ test.describe('teams', () => {
     await expect(frame.locator('[data-test="scp-capacity-summary"]')).toContainText('75');
     await expect(frame.getByLabel(/Available capacity in days for Alice/i)).not.toHaveValue('4');
 
-    // And Beta still shows both changes after a reload (persisted server-side).
+    // A fresh reload lands on the REMEMBERED team (Alpha was picked last — the
+    // planner stores the choice per user in server-side prefs)…
     const reloaded = await openPlanner(managerPage, PROJECTS.one.key);
+    await expect(reloaded.locator('[data-test="scp-capacity-section"]')).toContainText(
+      'Capacity — Alpha',
+    );
+    // …and Beta still shows both changes (persisted server-side), leaving the
+    // remembered team back on Alpha for later specs.
     await switchTeam(reloaded, 'Beta');
     await expect(reloaded.getByLabel(/Available capacity in days for Bob/i)).toHaveValue('4');
     await expect(reloaded.locator('[data-test="scp-capacity-summary"]')).toContainText('60');
+    await switchTeam(reloaded, 'Alpha');
+    await expect(reloaded.locator('[data-test="scp-capacity-section"]')).toContainText(
+      'Capacity — Alpha',
+    );
   });
 
   test('single-team project shows no team chrome', async ({ managerPage }) => {

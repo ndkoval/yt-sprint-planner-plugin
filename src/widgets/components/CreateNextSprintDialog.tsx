@@ -16,10 +16,10 @@ export interface CreateNextSprintDialogProps {
   show: boolean;
   /** Computed preview of the next Sprint; omitted while loading. */
   preview?: NextSprintPreview;
-  /** How many unresolved issues would carry over from the current Sprint. */
+  /** How many unresolved issues would carry over from the team's current Sprint. */
   carryOverCount?: number;
-  /** True when the project has several teams — Sprints (and carry-over) span all of them. */
-  multiTeam?: boolean;
+  /** Name of the team the Sprint is created for (null in single-team projects). */
+  teamName?: string | null;
   creating?: boolean;
   onCancel(): void;
   onCreate(request: CreateNextSprintRequest): void;
@@ -32,7 +32,7 @@ export function CreateNextSprintDialog({
   show,
   preview,
   carryOverCount = 0,
-  multiTeam = false,
+  teamName = null,
   creating = false,
   onCancel,
   onCreate,
@@ -58,7 +58,9 @@ export function CreateNextSprintDialog({
       }}
     >
       <div style={{ padding: 'calc(var(--ring-unit) * 3)', minWidth: 420 }}>
-        <h2 style={{ marginTop: 0, font: 'var(--ring-font-larger)' }}>Create next Sprint</h2>
+        <h2 style={{ marginTop: 0, font: 'var(--ring-font-larger)' }}>
+          Create next Sprint{teamName !== null ? ` — ${teamName}` : ''}
+        </h2>
 
         <div
           style={{
@@ -97,8 +99,8 @@ export function CreateNextSprintDialog({
           <Checkbox
             label={
               carryOverCount > 0
-                ? `Carry over ${carryOverCount} unfinished issue${carryOverCount === 1 ? '' : 's'} from the current Sprint${multiTeam ? ' (all teams)' : ''}`
-                : `Carry over unfinished issues from the current Sprint${multiTeam ? ' (all teams)' : ''}`
+                ? `Carry over ${carryOverCount} unfinished issue${carryOverCount === 1 ? '' : 's'} from the current Sprint`
+                : 'Carry over unfinished issues from the current Sprint'
             }
             checked={moveUnresolvedIssues}
             disabled={creating}
@@ -121,7 +123,7 @@ export function CreateNextSprintDialog({
           ) : null}
         </div>
 
-        {multiTeam ? (
+        {teamName !== null ? (
           <p
             style={{
               ...rowStyle,
@@ -129,8 +131,8 @@ export function CreateNextSprintDialog({
               color: 'var(--ring-secondary-color)',
             }}
           >
-            All teams share the new Sprint&apos;s dates; each team&apos;s focus factor is
-            calibrated from its own history.
+            The Sprint is created on {teamName}&apos;s board with {teamName}&apos;s cadence;
+            other teams&apos; Sprints are not affected.
           </p>
         ) : null}
 

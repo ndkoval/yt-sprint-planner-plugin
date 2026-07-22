@@ -46,11 +46,23 @@ export async function sprintIssues(
   }));
 }
 
-/** The app backend's config response for a project (admin caller). */
+/** The app backend's config response for a project (admin caller). Config v4: all settings per team. */
 export async function appConfig(projectKey: string): Promise<{
   configured: boolean;
   configRevision: number;
-  config: { nameTemplate?: string; hoursPerDay?: number; teams?: Array<{ id: string; name: string }> } | null;
+  config: {
+    version?: number;
+    teams?: Array<{
+      id: string;
+      name: string;
+      boardId?: string;
+      nameTemplate?: string;
+      hoursPerDay?: number;
+      sprintLengthDays?: number;
+      backlogQuery?: string;
+      reminderLeadDays?: number;
+    }>;
+  } | null;
 }> {
   const url = new URL('api/extensionEndpoints/sprint-capacity-planner/backend/config', base);
   url.searchParams.set('project', projectKey);

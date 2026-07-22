@@ -22,8 +22,8 @@ Manager = project leader or `UPDATE_PROJECT` holder (above), resolved per reques
 | `GET prefs` / `POST prefs` | any authenticated user — reads/writes only the **caller's own** `scpPrefsJson` User property (self-scoped; no project parameter, no project resolution) |
 | `GET config` | any authenticated user (returns `isManager` / `isProjectLeader` for UI hints only) |
 | `POST config` | manager (`canEditSettings`) |
-| `GET sprint-data` | any authenticated user (`canReadSprint`) |
-| `POST sprint-register` | manager (`canCreateSprint`) — plus the caller's own board permission for the native create/edit that precedes it |
+| `GET sprint-data` | any authenticated user (`canReadSprint`) — returns **one team's** sprint map (`?team=`, resolved like any team-scoped request) |
+| `POST sprint-register` | manager (`canCreateSprint`) — team-scoped (`{teamId?, sprint, seed?}` upserts the **addressed team's** entry only), plus the caller's own board permission for the native create/edit that precedes it |
 | `POST capacity` | own row: any member (`target: 'me'` resolves server-side); **any** row in **any** team: manager (`canEditCapacityRow`) |
 | `POST capacity-reset` | own row, or any row for a manager |
 | `POST focus-factor` | manager (`canOverrideFocusFactor`) |
@@ -51,7 +51,7 @@ HTTP-equivalent statuses are kept per code for log readability and client parity
 | `NOT_CONFIGURED`, `CAPACITY_REVISION_CONFLICT`, `CONFIG_REVISION_CONFLICT`, `SPRINT_ALREADY_EXISTS` | 409 |
 | `INTERNAL_ERROR` | 500 |
 
-The revision-conflict codes guard **same-team** races via per-team `capacityRevision`; overlapping writes to *different* teams of one Sprint are not a conflict the platform can detect (extension-property writes are last-write-wins, no compare-and-set) and are converged by the client's verified-write loop (`writeCapacityVerified` in [`src/widgets/api-client.ts`](src/widgets/api-client.ts)) — see [`DATA_MODEL.md`](DATA_MODEL.md) → *Scale & concurrency*.
+The revision-conflict codes guard **same-team** races via per-team `capacityRevision`; teams write **disjoint subtrees** (`teams[teamId].sprints`) of the *same* extension property, so overlapping writes by different teams are not a conflict the platform can detect (extension-property writes are last-write-wins, no compare-and-set) and are converged by the client's verified-write loop (`writeCapacityVerified` in [`src/widgets/api-client.ts`](src/widgets/api-client.ts)) — see [`DATA_MODEL.md`](DATA_MODEL.md) → *Scale & concurrency*.
 
 ## Logging
 
@@ -59,7 +59,7 @@ The backend emits **one sanitized `console.error` line per failed request** — 
 
 ## Input validation at the boundary
 
-Every mutating request body is validated with **zod** before any state change: request schemas in [`src/shared/api-schemas.ts`](src/shared/api-schemas.ts) (`putConfigRequestSchema`, `registerSprintRequestSchema`, `capacityWriteRequestSchema`, `capacityResetRequestSchema`, `overrideFocusFactorRequestSchema`, `setCalibrationRequestSchema`, `importRequestSchema`); document schemas in [`src/shared/schemas.ts`](src/shared/schemas.ts) (all `.strict()`). A `ZodError` becomes `VALIDATION_FAILED` with a sanitized `{path, message}` problem list — raw payloads are never echoed. Team-scoped mutations resolve their target team server-side: an unknown `teamId`, or an omitted one in a multi-team project, is `VALIDATION_FAILED` (never a silent default).
+Every mutating request body is validated with **zod** before any state change: request schemas in [`src/shared/api-schemas.ts`](src/shared/api-schemas.ts) (`putConfigRequestSchema`, `registerSprintRequestSchema`, `capacityWriteRequestSchema`, `capacityResetRequestSchema`, `overrideFocusFactorRequestSchema`, `setCalibrationRequestSchema`, `importRequestSchema`); document schemas in [`src/shared/schemas.ts`](src/shared/schemas.ts) (all `.strict()`). A `ZodError` becomes `VALIDATION_FAILED` with a sanitized `{path, message}` problem list — raw payloads are never echoed. Team-scoped requests (including the `team` query parameter of `GET sprint-data`) resolve their target team server-side: an unknown `teamId`, or an omitted one in a multi-team project, is `VALIDATION_FAILED` (never a silent default).
 
 Persisted documents are also validated **on read** (migrate-then-parse in [`src/backend/storage.ts`](src/backend/storage.ts)); anything unreadable is treated as absent rather than half-trusted.
 

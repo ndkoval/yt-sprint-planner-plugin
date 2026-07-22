@@ -5,11 +5,13 @@ import {
   appFrame,
   guardErrors,
   resetDemoState,
+  PROJECT_KEY,
   SECOND_PROJECT_KEY,
   Captioner,
   closeTitleCard,
   primeTitleCard,
   humanClick,
+  humanFill,
   moveTo,
   settle,
 } from './helpers.js';
@@ -37,36 +39,60 @@ test.describe('Multiple projects', () => {
     await closeTitleCard(page);
 
     await expect(agp.getByText('Raw capacity')).toBeVisible();
-    await cap.say('AppGlass runs two-week Sprints with two teams — Platform and Mobile.');
-    await moveTo(page, agp.locator('[data-test="scp-team-select"]'));
-    await settle(page, 900);
-    await moveTo(page, agp.getByText(/AppGlass \d{4}-S\d+/).first());
+    // Show the evidence WHILE the line plays: open the team selector so both teams
+    // are literally on screen.
+    await humanClick(page, agp.getByRole('combobox', { name: 'Select a team' }));
+    const teamPopup = agp.locator('[data-test="ring-popup"]');
+    await expect(teamPopup).toContainText('Mobile');
+    await cap.say('AppGlass plans as two independent teams — Platform on two-week Sprints, Mobile on one-week ones, each on its own board.');
+    await settle(page, 700);
+    await page.keyboard.press('Escape');
+    await moveTo(page, agp.getByText('Capacity — Platform', { exact: true }));
+    await settle(page, 600);
+    await moveTo(page, agp.getByText(/Platform \d{4}-S\d+/).first());
     await settle(page, 900);
 
-    // 2. Jump to the second project — a completely different setup.
-    await cap.say('Orbit CRM is a different world — one small team, one-week Sprints, six-hour days.');
+    // 2. Jump to the second project — navigate FIRST, describe once Orbit is visible.
+    await cap.say('Now hop to a second project.');
     const orb = await openProjectApp(page, 'Sprint Capacity', { projectKey: SECOND_PROJECT_KEY });
     await expect(orb.getByText('Raw capacity')).toBeVisible();
     await moveTo(page, orb.getByText(/Orbit \d{4}-S\d+/).first());
-    await settle(page, 1000);
+    await cap.say('Orbit CRM is a different world — one small team on one-week Sprints.');
+    await settle(page, 800);
     await cap.say('Its own board, its own sprint names, its own team — nothing is shared.');
     await moveTo(page, orb.getByText('Raw capacity').first());
     await settle(page, 900);
 
-    // 3. Peek into Orbit's settings: every knob is project-local.
-    await cap.say('All of it lives in the project settings — schedule, backlog, teams, even reminders.');
+    // 3. Orbit's settings: every knob belongs to the team — and prove the isolation
+    // with a REAL edit: bump Erin's allocation, save, then show AppGlass untouched.
+    // Click FIRST so the settings page is on screen while the line describes it.
     await humanClick(page, orb.getByRole('button', { name: /^Settings$/ }));
+    await cap.say('All of it lives with the team in its project settings — board, schedule, backlog, even reminders.');
     const sf = await appFrame(page);
-    await expect(sf.getByRole('heading', { name: 'Schedule' })).toBeVisible();
-    await moveTo(page, sf.getByRole('heading', { name: 'Schedule' }));
+    await expect(sf.getByText('Schedule', { exact: true })).toBeVisible();
+    await moveTo(page, sf.getByLabel(/Hours per day/i));
     await expect(sf.getByLabel(/Sprint length/i)).toHaveValue('7');
+    await cap.say('Seven-day Sprints, six-hour days — Orbit’s own schedule.');
+    await settle(page, 700);
+    await cap.say('Watch a real change: Erin drops to eighty percent — and save.');
+    await humanFill(page, sf.getByLabel(/Allocation for Erin Park/i), '80');
+    await humanClick(page, sf.getByRole('button', { name: 'Save settings' }));
+    await expect(sf.getByText('Settings saved.')).toBeVisible();
     await settle(page, 900);
-    await cap.say('Change a project here — every other project stays exactly as its managers set it.');
-    await moveTo(page, sf.getByRole('button', { name: 'Save settings' }));
-    await settle(page, 1000);
+
+    // Back to AppGlass — deep-link STRAIGHT to the planner tab (no confusing hop
+    // through the Apps admin list mid-claim).
+    await page.goto(`/projects/${PROJECT_KEY}?tab=sprint-capacity-planner%3ASprint+Capacity`, {
+      waitUntil: 'domcontentloaded',
+    });
+    const agpAgain = await appFrame(page);
+    await expect(agpAgain.getByText('Capacity — Platform', { exact: true })).toBeVisible();
+    await moveTo(page, agpAgain.getByText('Capacity — Platform', { exact: true }));
+    await cap.say('And AppGlass? Exactly as its managers left it — every team, every project, fully isolated.');
+    await settle(page, 900);
 
     await cap.say('Sprint Capacity Planner — configure each project once, plan them all with confidence.');
-    await settle(page, 1400);
+    await settle(page, 900);
     await info.attach('multi-project.png', { body: await page.screenshot(), contentType: 'image/png' });
 
     const vtt = await cap.writeVtt('03-multi-project');

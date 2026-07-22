@@ -26,6 +26,7 @@ import {
   utcMsToIso,
   type FocusFactorResult,
 } from '../domain/index.js';
+import type { Team, TeamSprint } from '../shared/types.js';
 import type {
   ApiError,
   ApiErrorCode,
@@ -45,10 +46,10 @@ import type {
   UserPrefs,
   UserSummary,
 } from '../shared/api.js';
-import type { FocusFactorSource, ProjectConfig, SprintEntry } from '../shared/types.js';
+import type { ProjectConfig } from '../shared/types.js';
 import type { HostRequestInit, WidgetHost } from './host.js';
 import { buildSprintView, toEffortIssue, toIssueView } from './sprint-view.js';
-import { NativeYouTrack, type YtIssue, type YtSprint } from './youtrack-client.js';
+import { NativeYouTrack, type YtSprint } from './youtrack-client.js';
 
 export { buildSprintView } from './sprint-view.js';
 
@@ -187,9 +188,14 @@ export class ApiClient {
 
   // --- Backend transport ----------------------------------------------------
 
-  private async app<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+  private async app<T>(
+    method: 'GET' | 'POST',
+    path: string,
+    body?: unknown,
+    extraQuery?: Record<string, string>,
+  ): Promise<T> {
     const { key } = await this.project();
-    return this.appRaw(method, path, { project: key }, body);
+    return this.appRaw(method, path, { project: key, ...(extraQuery ?? {}) }, body);
   }
 
   /** Backend call WITHOUT a project scope (per-user endpoints like prefs). */
@@ -230,6 +236,11 @@ export class ApiClient {
   /** Persist the last-picked project (null clears it). Best-effort. */
   async saveLastProject(lastProjectKey: string | null): Promise<void> {
     await this.appGlobal('POST', 'prefs', { lastProjectKey }).catch(() => {});
+  }
+
+  /** Persist the last-picked team of a project (null forgets it). Best-effort. */
+  async saveLastTeam(projectKey: string, teamId: string | null): Promise<void> {
+    await this.appGlobal('POST', 'prefs', { lastTeam: { projectKey, teamId } }).catch(() => {});
   }
 
   private async requireConfig(): Promise<ProjectConfig> {
@@ -284,19 +295,35 @@ export class ApiClient {
     return this.yt.getProjectCustomFields(id);
   }
 
-  // --- Sprints -------------------------------------------------------------
+  // --- Sprints (team-scoped: each team plans on its OWN board) ---------------
 
-  private sprintEntries(): Promise<Record<string, SprintEntry>> {
-    return this.app<{ sprints: Record<string, SprintEntry> }>('GET', 'sprint-data').then(
-      (d) => d.sprints,
-    );
+  /** Resolve the targeted team (explicit id, or the config's only team). */
+  private async requireTeam(teamId?: string): Promise<Team> {
+    const config = await this.requireConfig();
+    const team = resolveTeam(config, teamId);
+    if (team) return team;
+    throw new ApiClientError({
+      code: 'VALIDATION_FAILED',
+      message:
+        teamId === undefined
+          ? 'This project has several teams — specify which team the request targets.'
+          : `Unknown team "${teamId}".`,
+      details: { teamId: teamId ?? null },
+      correlationId: '',
+    });
   }
 
-  async listSprints(): Promise<SprintSummary[]> {
-    const config = await this.requireConfig();
+  private sprintEntries(teamId: string): Promise<Record<string, TeamSprint>> {
+    return this.app<{ sprints: Record<string, TeamSprint> }>('GET', 'sprint-data', undefined, {
+      team: teamId,
+    }).then((d) => d.sprints);
+  }
+
+  async listSprints(teamId?: string): Promise<SprintSummary[]> {
+    const team = await this.requireTeam(teamId);
     const [sprints, entries] = await Promise.all([
-      this.yt.listSprints(config.boardId),
-      this.sprintEntries(),
+      this.yt.listSprints(team.boardId),
+      this.sprintEntries(team.id),
     ]);
     const summaries: SprintSummary[] = sprints.map((s) => ({
       id: s.id,
@@ -308,27 +335,28 @@ export class ApiClient {
       sequence: entries[s.id]?.sequence ?? 0,
       unresolvedIssueCount: 0,
     }));
-    // The carry-over preview needs the unresolved count of the LATEST managed Sprint.
+    // The carry-over preview needs the unresolved count of the team's LATEST
+    // managed Sprint.
     const latest = summaries
       .filter((s) => s.managed)
       .reduce<SprintSummary | null>((a, s) => (a === null || s.sequence > a.sequence ? s : a), null);
     if (latest) {
       const issues = await this.yt.getSprintIssues(
-        config.boardId,
+        team.boardId,
         latest.id,
-        config.originalEffortField,
-        config.currentEffortField,
+        team.originalEffortField,
+        team.currentEffortField,
       );
       latest.unresolvedIssueCount = issues.filter((i) => !i.resolved).length;
     }
     return summaries;
   }
 
-  async getSprint(sprintId: string): Promise<SprintView> {
-    const config = await this.requireConfig();
+  async getSprint(sprintId: string, teamId?: string): Promise<SprintView> {
+    const team = await this.requireTeam(teamId);
     const [native, entries] = await Promise.all([
-      this.yt.getSprint(config.boardId, sprintId),
-      this.sprintEntries(),
+      this.yt.getSprint(team.boardId, sprintId),
+      this.sprintEntries(team.id),
     ]);
     if (!native) {
       throw new ApiClientError({
@@ -341,43 +369,42 @@ export class ApiClient {
     const issues =
       native.start !== null && native.finish !== null
         ? await this.yt.getSprintIssues(
-            config.boardId,
+            team.boardId,
             sprintId,
-            config.originalEffortField,
-            config.currentEffortField,
+            team.originalEffortField,
+            team.currentEffortField,
           )
         : [];
-    return buildSprintView(native, entries[sprintId] ?? null, config.teams, issues, Date.now());
+    return buildSprintView(native, entries[sprintId] ?? null, team, issues, Date.now());
   }
 
   /** The Sprint's issues (with assignee + effort) for the planning board. */
-  async listSprintIssues(sprintId: string): Promise<IssueView[]> {
-    const config = await this.requireConfig();
+  async listSprintIssues(sprintId: string, teamId?: string): Promise<IssueView[]> {
+    const team = await this.requireTeam(teamId);
     const issues = await this.yt.getSprintIssues(
-      config.boardId,
+      team.boardId,
       sprintId,
-      config.originalEffortField,
-      config.currentEffortField,
+      team.originalEffortField,
+      team.currentEffortField,
     );
     return issues.map(toIssueView);
   }
 
   /**
-   * The backlog pool for one team (its override query, else the project query),
-   * minus issues already in the Sprint. `teamId` omitted = single-team project.
+   * The team's backlog pool (its own query — empty hides the lane), minus issues
+   * already in the Sprint.
    */
   async listBacklog(sprintId: string, teamId?: string): Promise<IssueView[]> {
-    const config = await this.requireConfig();
-    const team = resolveTeam(config, teamId);
-    const query = team ? effectiveBacklogQuery(config, team) : (config.backlogQuery ?? '').trim();
+    const team = await this.requireTeam(teamId);
+    const query = effectiveBacklogQuery(team);
     if (query.length === 0) return [];
     const [candidates, sprintIssues] = await Promise.all([
-      this.yt.searchIssues(query, config.originalEffortField, config.currentEffortField),
+      this.yt.searchIssues(query, team.originalEffortField, team.currentEffortField),
       this.yt.getSprintIssues(
-        config.boardId,
+        team.boardId,
         sprintId,
-        config.originalEffortField,
-        config.currentEffortField,
+        team.originalEffortField,
+        team.currentEffortField,
       ),
     ]);
     const inSprint = new Set(sprintIssues.map((i) => i.id));
@@ -385,38 +412,44 @@ export class ApiClient {
   }
 
   /**
-   * Plan an issue (a board drag): pull it into/out of the Sprint and set its assignee
-   * in one action. Runs as the current user, so YouTrack enforces the caller's board
-   * and issue permissions. Returns the refreshed SprintView.
+   * Plan an issue (a board drag): pull it into/out of the team's Sprint and set its
+   * assignee in one action. Runs as the current user, so YouTrack enforces the
+   * caller's board and issue permissions. Returns the refreshed SprintView.
    */
-  async planIssue(sprintId: string, issueId: string, body: PlanIssueRequest): Promise<SprintView> {
-    const config = await this.requireConfig();
+  async planIssue(
+    sprintId: string,
+    issueId: string,
+    body: PlanIssueRequest,
+    teamId?: string,
+  ): Promise<SprintView> {
+    const team = await this.requireTeam(teamId);
     const current = await this.yt.getSprintIssues(
-      config.boardId,
+      team.boardId,
       sprintId,
-      config.originalEffortField,
-      config.currentEffortField,
+      team.originalEffortField,
+      team.currentEffortField,
     );
     const alreadyInSprint = current.some((i) => i.id === issueId);
     if (body.inSprint) {
-      if (!alreadyInSprint) await this.yt.addIssueToSprint(config.boardId, sprintId, issueId);
+      if (!alreadyInSprint) await this.yt.addIssueToSprint(team.boardId, sprintId, issueId);
       await this.yt.setIssueAssignee(issueId, body.assigneeId);
     } else if (alreadyInSprint) {
-      await this.yt.removeIssueFromSprint(config.boardId, sprintId, issueId);
+      await this.yt.removeIssueFromSprint(team.boardId, sprintId, issueId);
     }
-    return this.getSprint(sprintId);
+    return this.getSprint(sprintId, team.id);
   }
 
   /**
-   * One-click "Create next Sprint": compute dates/sequence/name from the managed
-   * history, create the native Sprint (current user's own board permission), register
-   * the app state (sequence + seeded capacity), optionally carry unresolved issues over.
+   * One-click "Create next Sprint" for the TEAM: compute dates/sequence/name from
+   * the team's managed history, create the native Sprint on the team's board
+   * (current user's own board permission), register the team's app state (sequence +
+   * seeded capacity), optionally carry unresolved issues over.
    */
-  async createNextSprint(request: CreateNextSprintRequest): Promise<SprintView> {
-    const config = await this.requireConfig();
+  async createNextSprint(request: CreateNextSprintRequest, teamId?: string): Promise<SprintView> {
+    const team = await this.requireTeam(teamId);
     const [sprints, entries] = await Promise.all([
-      this.yt.listSprints(config.boardId),
-      this.sprintEntries(),
+      this.yt.listSprints(team.boardId),
+      this.sprintEntries(team.id),
     ]);
     const managed = sprints.filter((s) => s.id in entries);
     const previous = managed.reduce<YtSprint | null>(
@@ -425,11 +458,11 @@ export class ApiClient {
     );
 
     const dates = previous?.finish
-      ? nextSprintDates(previous.finish, config.sprintLengthDays)
-      : firstSprintDates(utcMsToIso(Date.now()), config.sprintLengthDays);
+      ? nextSprintDates(previous.finish, team.sprintLengthDays)
+      : firstSprintDates(utcMsToIso(Date.now()), team.sprintLengthDays);
     const sequences = Object.values(entries).map((e) => e.sequence);
     const sequence = sequences.length === 0 ? 1 : Math.max(...sequences) + 1;
-    const name = renderSprintName(config.nameTemplate, {
+    const name = renderSprintName(team.nameTemplate, {
       year: Number(dates.start.slice(0, 4)),
       sequence,
       startDate: dates.start,
@@ -438,7 +471,7 @@ export class ApiClient {
 
     // Duplicate checks — resume if an identical Sprint already exists.
     const duplicate = managed.find((s) => s.start === dates.start && s.finish === dates.finish);
-    if (duplicate) return this.getSprint(duplicate.id);
+    if (duplicate) return this.getSprint(duplicate.id, team.id);
     if (isDuplicateName(name, sprints.map((s) => s.name))) {
       throw new ApiClientError({
         code: 'SPRINT_ALREADY_EXISTS',
@@ -448,100 +481,84 @@ export class ApiClient {
       });
     }
 
-    const factors = await this.computeNextTeamFocusFactors(config, managed, entries);
+    const factor = await this.computeNextFocusFactor(team, managed, entries);
     const created = await this.yt.createSprint({
-      boardId: config.boardId,
+      boardId: team.boardId,
       name,
       goal: request.goal ?? '',
       start: dates.start,
       finish: dates.finish,
     });
-    const teamSeeds: Record<string, { focusFactor: number; focusFactorSource: FocusFactorSource }> =
-      {};
-    for (const [teamId, factor] of Object.entries(factors)) {
-      teamSeeds[teamId] = { focusFactor: factor.value, focusFactorSource: factor.source };
-    }
     await this.app('POST', 'sprint-register', {
+      teamId: team.id,
       sprint: { id: created.id, name: created.name, start: dates.start, finish: dates.finish },
-      teams: teamSeeds,
+      seed: { focusFactor: factor.value, focusFactorSource: factor.source },
     });
     if (request.moveUnresolvedIssues && previous) {
-      await this.yt.moveUnresolvedIssues(config.boardId, previous.id, created.id);
+      await this.yt.moveUnresolvedIssues(team.boardId, previous.id, created.id);
     }
-    return this.getSprint(created.id);
+    return this.getSprint(created.id, team.id);
   }
 
   /**
-   * Calibrate the next Sprint's Focus Factor PER TEAM, each from that team's latest
-   * completed, eligible managed Sprint (live figures — computed from current issues,
-   * filtered to the team's members). Teams calibrate independently: one team's
-   * over/under-delivery never moves another team's factor.
+   * Calibrate the team's next Focus Factor from its latest completed, eligible
+   * managed Sprint (live figures — computed from current issues, filtered to the
+   * team's members). Teams calibrate independently with their OWN learning rate:
+   * one team's over/under-delivery never moves another team's factor.
    */
-  private async computeNextTeamFocusFactors(
-    config: ProjectConfig,
+  private async computeNextFocusFactor(
+    team: Team,
     managed: readonly YtSprint[],
-    entries: Record<string, SprintEntry>,
-  ): Promise<Record<string, FocusFactorResult>> {
+    entries: Record<string, TeamSprint>,
+  ): Promise<FocusFactorResult> {
     const now = Date.now();
-    const completed = managed.filter((s) => s.finish !== null && isCompletedSprint(s.finish, now));
-    const issuesBySprint = new Map<string, readonly YtIssue[]>();
-    const sprintIssues = async (sprintId: string): Promise<readonly YtIssue[]> => {
-      const cached = issuesBySprint.get(sprintId);
-      if (cached) return cached;
-      const issues = await this.yt.getSprintIssues(
-        config.boardId,
-        sprintId,
-        config.originalEffortField,
-        config.currentEffortField,
-      );
-      issuesBySprint.set(sprintId, issues);
-      return issues;
-    };
+    const eligible = managed
+      .filter((s) => s.finish !== null && isCompletedSprint(s.finish, now))
+      .filter((s) => !entries[s.id]!.excludedFromCalibration)
+      .filter((s) => rawCapacityMinutes(entries[s.id]!.capacity) > 0);
+    if (eligible.length === 0) return bootstrapFocusFactor();
 
-    const factors: Record<string, FocusFactorResult> = {};
-    for (const team of config.teams) {
-      const eligible = completed
-        .filter((s) => entries[s.id]!.teams[team.id] !== undefined)
-        .filter((s) => !entries[s.id]!.teams[team.id]!.excludedFromCalibration)
-        .filter((s) => rawCapacityMinutes(entries[s.id]!.teams[team.id]!.capacity) > 0);
-      if (eligible.length === 0) {
-        factors[team.id] = bootstrapFocusFactor();
-        continue;
-      }
-      const source = eligible.reduce((latest, s) =>
-        (s.finish ?? '') > (latest.finish ?? '') ? s : latest,
-      );
-      const teamEntry = entries[source.id]!.teams[team.id]!;
-      const logins = teamMemberLogins(team);
-      const issues = await sprintIssues(source.id);
-      const teamIssues = issues
-        .map(toEffortIssue)
-        .filter((i) => i.assigneeId !== null && i.assigneeId !== undefined && logins.has(i.assigneeId));
-      const metrics = computeMetrics(
-        teamEntry.capacity,
-        teamIssues,
-        source.start!,
-        source.finish!,
-        teamEntry.focusFactor,
-      );
-      const observed = observedFocusFactor(
-        metrics.completedOriginalEffortMinutes,
-        metrics.rawCapacityMinutes,
-      );
-      // Carry forward when nothing could be observed (no team effort or no capacity).
-      const carryForward = metrics.originalEffortMinutes === 0 || observed === null;
-      factors[team.id] = nextFocusFactor(
-        { previousFactor: teamEntry.focusFactor, observed, carryForward },
-        { learningRate: config.learningRate },
-      );
-    }
-    return factors;
+    const source = eligible.reduce((latest, s) =>
+      (s.finish ?? '') > (latest.finish ?? '') ? s : latest,
+    );
+    const entry = entries[source.id]!;
+    const logins = teamMemberLogins(team);
+    const issues = await this.yt.getSprintIssues(
+      team.boardId,
+      source.id,
+      team.originalEffortField,
+      team.currentEffortField,
+    );
+    const teamIssues = issues
+      .map(toEffortIssue)
+      .filter((i) => i.assigneeId !== null && i.assigneeId !== undefined && logins.has(i.assigneeId));
+    const metrics = computeMetrics(
+      entry.capacity,
+      teamIssues,
+      source.start!,
+      source.finish!,
+      entry.focusFactor,
+    );
+    const observed = observedFocusFactor(
+      metrics.completedOriginalEffortMinutes,
+      metrics.rawCapacityMinutes,
+    );
+    // Carry forward when nothing could be observed (no team effort or no capacity).
+    const carryForward = metrics.originalEffortMinutes === 0 || observed === null;
+    return nextFocusFactor(
+      { previousFactor: entry.focusFactor, observed, carryForward },
+      { learningRate: team.learningRate },
+    );
   }
 
-  /** Edit native Sprint details, then resync the app snapshot (defaults recompute). */
-  async patchSprintDetails(sprintId: string, patch: PatchSprintDetailsRequest): Promise<SprintView> {
-    const config = await this.requireConfig();
-    const current = await this.yt.getSprint(config.boardId, sprintId);
+  /** Edit native Sprint details, then resync the team's snapshot (defaults recompute). */
+  async patchSprintDetails(
+    sprintId: string,
+    patch: PatchSprintDetailsRequest,
+    teamId?: string,
+  ): Promise<SprintView> {
+    const team = await this.requireTeam(teamId);
+    const current = await this.yt.getSprint(team.boardId, sprintId);
     if (!current) {
       throw new ApiClientError({
         code: 'NOT_FOUND',
@@ -568,13 +585,14 @@ export class ApiClient {
         correlationId: '',
       });
     }
-    const updated = await this.yt.updateSprint(config.boardId, sprintId, patch);
+    const updated = await this.yt.updateSprint(team.boardId, sprintId, patch);
     if (updated.start !== null && updated.finish !== null) {
       await this.app('POST', 'sprint-register', {
+        teamId: team.id,
         sprint: { id: sprintId, name: updated.name, start: updated.start, finish: updated.finish },
       });
     }
-    return this.getSprint(sprintId);
+    return this.getSprint(sprintId, team.id);
   }
 
   // --- Capacity (team-scoped) ------------------------------------------------
@@ -599,15 +617,14 @@ export class ApiClient {
     let view: SprintView;
     for (let attempt = 0; ; attempt += 1) {
       await this.app('POST', 'capacity', { sprintId, teamId, target, ...body, expectedRevision });
-      view = await this.getSprint(sprintId);
-      const row = view.teams.find((t) => t.teamId === teamId)?.capacity.rows[login];
+      view = await this.getSprint(sprintId, teamId);
+      const row = view.team.capacity.rows[login];
       const applied =
         row !== undefined &&
         (body.availableMinutes === undefined || row.availableMinutes === body.availableMinutes) &&
         (body.note === undefined || row.note === body.note);
       if (applied || attempt >= 2) return view;
-      const teamView = view.teams.find((t) => t.teamId === teamId);
-      expectedRevision = teamView?.capacityRevision ?? expectedRevision;
+      expectedRevision = view.team.capacityRevision;
     }
   }
 
@@ -635,7 +652,7 @@ export class ApiClient {
     expectedRevision: number,
   ): Promise<SprintView> {
     await this.app('POST', 'capacity-reset', { sprintId, teamId, userId, expectedRevision });
-    return this.getSprint(sprintId);
+    return this.getSprint(sprintId, teamId);
   }
 
   // --- Focus factor / calibration (team-scoped) ------------------------------
@@ -649,9 +666,8 @@ export class ApiClient {
     let view: SprintView;
     for (let attempt = 0; ; attempt += 1) {
       await this.app('POST', 'focus-factor', { sprintId, teamId, ...body });
-      view = await this.getSprint(sprintId);
-      const team = view.teams.find((t) => t.teamId === teamId);
-      if ((team !== undefined && team.focusFactor === body.newValue) || attempt >= 2) return view;
+      view = await this.getSprint(sprintId, teamId);
+      if (view.team.focusFactor === body.newValue || attempt >= 2) return view;
     }
   }
 
@@ -661,11 +677,11 @@ export class ApiClient {
     body: { reason: string },
   ): Promise<SprintView> {
     await this.app('POST', 'calibration', { sprintId, teamId, excluded: true, reason: body.reason });
-    return this.getSprint(sprintId);
+    return this.getSprint(sprintId, teamId);
   }
 
   async includeInCalibration(sprintId: string, teamId: string): Promise<SprintView> {
     await this.app('POST', 'calibration', { sprintId, teamId, excluded: false });
-    return this.getSprint(sprintId);
+    return this.getSprint(sprintId, teamId);
   }
 }

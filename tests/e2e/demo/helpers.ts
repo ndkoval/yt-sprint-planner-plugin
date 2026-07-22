@@ -37,7 +37,9 @@ export const test = base.extend<{ demoCursor: void }>({
 });
 
 export const PROJECT_KEY = process.env.PROJECT_KEY ?? 'AGP';
-export const BOARD_NAME = 'AppGlass Board';
+/** Since config v4 each demo team plans on its OWN board. */
+export const PLATFORM_BOARD_NAME = 'AppGlass Platform Board';
+export const MOBILE_BOARD_NAME = 'AppGlass Mobile Board';
 /** The second demo project (per-project independence scenes). */
 export const SECOND_PROJECT_KEY = process.env.SECOND_PROJECT_KEY ?? 'ORB';
 
@@ -110,7 +112,7 @@ export async function openBoard(page: Page, agileId: string, sprintId?: string):
 }
 
 /** Resolve an agile board id by name (via the authenticated REST API) and open it. */
-export async function openBoardByName(page: Page, name = BOARD_NAME): Promise<string> {
+export async function openBoardByName(page: Page, name = PLATFORM_BOARD_NAME): Promise<string> {
   const res = await page.request.get('/api/agiles?fields=id,name&$top=200', {
     headers: { Accept: 'application/json' },
   });
@@ -183,7 +185,11 @@ export async function dragCard(
   await target.dispatchEvent('dragover', { dataTransfer: dt });
   await page.waitForTimeout(100);
   await target.dispatchEvent('drop', { dataTransfer: dt });
-  await source.dispatchEvent('dragend', { dataTransfer: dt }).catch(() => {});
+  // SHORT timeout: the drop triggers a re-render that can remove the source card
+  // from the DOM (e.g. drag-to-backlog), and a default-timeout dispatchEvent then
+  // blocks ~30s waiting for the element — the "video hung" dead stretch two review
+  // rounds flagged. The dragend is purely cosmetic at this point.
+  await source.dispatchEvent('dragend', { dataTransfer: dt }, { timeout: 1000 }).catch(() => {});
   await dt.dispose();
   await page.waitForTimeout(400);
 

@@ -93,6 +93,28 @@ function silences(file, thresholdDb = -40, minDur = 0.4) {
   }
   return out;
 }
+/**
+ * Frozen-picture stretches (ffmpeg freezedetect): identical frames for `minDur`+
+ * seconds. A frozen stretch that ALSO overlaps silence reads as a broken video —
+ * the review that motivated this found a 35s frozen+silent gap that per-frame
+ * sampling missed entirely.
+ */
+function freezes(file, minDur = 6, noiseDb = -60) {
+  const r = spawnSync('ffmpeg',
+    ['-hide_banner', '-i', file, '-vf', `freezedetect=n=${noiseDb}dB:d=${minDur}`, '-map', '0:v:0',
+     '-f', 'null', '-'],
+    { encoding: 'utf8' });
+  const out = [];
+  const re = /freeze_start:\s*([0-9.]+)|freeze_end:\s*([0-9.]+)/g;
+  let m, cur = null;
+  while ((m = re.exec(r.stderr))) {
+    if (m[1] !== undefined) cur = { start: Number(m[1]) };
+    else if (cur) { cur.end = Number(m[2]); cur.dur = cur.end - cur.start; out.push(cur); cur = null; }
+  }
+  // An unclosed freeze runs to EOF.
+  if (cur) out.push({ start: cur.start, end: null, dur: null });
+  return out;
+}
 /** Average RGB + per-channel stddev of one downscaled frame (via 2x2 rawvideo). */
 function frameStats(file, t) {
   const r = spawnSync('ffmpeg',
@@ -251,6 +273,24 @@ function analyze(file, vttFile) {
   }
   add(blanks > 0 ? 'WARN' : 'PASS', 'blank-frames',
     blanks > 0 ? `${blanks}/${samples} sampled frames are near-blank` : `no blank frames in ${samples} samples`);
+
+  // Frozen scenes: near-identical frames for 5s+ that ALSO overlap 4s+ of silence
+  // read as a broken video (per-frame sampling cannot catch these). Noise floor
+  // -66dB: strict enough that live TYPING (a few changed pixels) counts as motion,
+  // loose enough that an encoder-static dead scene still registers; caption
+  // antialiasing can split one long freeze into shorter windows, so each window is
+  // checked against the silence map independently.
+  const frz = freezes(file, 5, -66);
+  const silRanges = silences(file);
+  const broken = frz
+    .map((f) => ({ ...f, end: f.end ?? dur }))
+    .filter((f) =>
+      silRanges.some((s) => Math.min(f.end, s.end ?? dur) - Math.max(f.start, s.start) > 4),
+    );
+  add(broken.length > 0 ? 'WARN' : 'PASS', 'frozen-scenes',
+    broken.length > 0
+      ? broken.map((f) => `frozen+silent ${fmt(f.start, 0)}s–${fmt(f.end, 0)}s (${fmt(f.end - f.start, 0)}s)`).join('; ')
+      : 'no frozen-and-silent stretches over 5s');
 
   const sheet = contactSheet(file, dur, file.replace(/\.mp4$/, '.contact.png'));
   return { checks, sheet: sheet ? path.basename(sheet) : null };

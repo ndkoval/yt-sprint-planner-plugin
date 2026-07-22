@@ -1,28 +1,27 @@
 /**
  * Pure assembly of the client-facing {@link SprintView} from native Sprint data, the
- * app's stored {@link SprintEntry}, the config's teams and the current issue set.
- * Metrics are computed live here (compute-on-read) with the shared domain math —
- * there is no cached copy to go stale.
+ * team's stored {@link TeamSprint} entry, the owning {@link Team} and the current
+ * issue set. Metrics are computed live here (compute-on-read) with the shared domain
+ * math — there is no cached copy to go stale.
  *
- * Team attribution: an issue belongs to the team its assignee is a member of
- * (see {@link ../domain/teams/teams.ts}); unassigned issues belong to no team and
- * only count in the Sprint totals. Teams present in the config but missing from the
- * entry (added after registration) get an empty view with capacityRevision 0 — the
- * backend materializes them lazily on the first write with the same revision, so
- * optimistic concurrency stays coherent. Entry teams no longer in the config
- * (deleted teams) are retained in storage but hidden here.
+ * Since config v4 a Sprint view belongs to exactly ONE team (each team plans on its
+ * own board). Team attribution: an issue belongs to the team when its assignee is a
+ * team member (see {@link ../domain/teams/teams.ts}); unassigned issues belong to no
+ * member and only count in the Sprint totals. A Sprint not yet managed by the team
+ * (no entry) gets an empty view with capacityRevision 0 — the backend materializes
+ * the entry lazily on the first write with the same revision, so optimistic
+ * concurrency stays coherent.
  */
 import {
   DEFAULT_FOCUS_FACTOR,
   buildCompletion,
   computeMetrics,
   isCompletedSprint,
-  observedFocusFactor,
   teamMemberLogins,
   type EffortIssue,
 } from '../domain/index.js';
 import type { AssigneeEffortView, IssueView, SprintView, TeamSprintView } from '../shared/api.js';
-import type { CapacityDocument, SprintEntry, Team } from '../shared/types.js';
+import type { CapacityDocument, Team, TeamSprint } from '../shared/types.js';
 
 const EMPTY_CAPACITY: CapacityDocument = { version: 2, createdFromConfigVersion: 0, rows: {} };
 
@@ -75,27 +74,26 @@ export function toIssueView(issue: IssueLike): IssueView {
 
 const ZERO_EFFORT: AssigneeEffortView = { originalEffortMinutes: 0, currentEffortMinutes: 0 };
 
-/** One team's slice: stored planning state + metrics over the team's issues. */
+/** The team's slice: stored planning state + metrics over the team's issues. */
 function buildTeamView(
   team: Team,
-  entry: SprintEntry | null,
+  entry: TeamSprint | null,
   teamIssues: readonly EffortIssue[],
   start: string,
   finish: string,
 ): TeamSprintView {
-  const teamEntry = entry?.teams[team.id] ?? null;
-  const focusFactor = teamEntry?.focusFactor ?? DEFAULT_FOCUS_FACTOR;
-  const metrics = computeMetrics(teamEntry?.capacity ?? null, teamIssues, start, finish, focusFactor);
+  const focusFactor = entry?.focusFactor ?? DEFAULT_FOCUS_FACTOR;
+  const metrics = computeMetrics(entry?.capacity ?? null, teamIssues, start, finish, focusFactor);
   return {
     teamId: team.id,
     teamName: team.name,
-    capacityRevision: teamEntry?.capacityRevision ?? 0,
-    capacity: teamEntry?.capacity ?? EMPTY_CAPACITY,
+    capacityRevision: entry?.capacityRevision ?? 0,
+    capacity: entry?.capacity ?? EMPTY_CAPACITY,
     focusFactor,
-    focusFactorSource: teamEntry?.focusFactorSource ?? 'bootstrap',
-    focusFactorOverride: teamEntry?.focusFactorOverride ?? null,
-    excludedFromCalibration: teamEntry?.excludedFromCalibration ?? false,
-    calibrationSkipReason: teamEntry?.calibrationSkipReason ?? null,
+    focusFactorSource: entry?.focusFactorSource ?? 'bootstrap',
+    focusFactorOverride: entry?.focusFactorOverride ?? null,
+    excludedFromCalibration: entry?.excludedFromCalibration ?? false,
+    calibrationSkipReason: entry?.calibrationSkipReason ?? null,
     rawCapacityMinutes: metrics.rawCapacityMinutes,
     plannedCapacityMinutes: metrics.plannedCapacityMinutes,
     originalEffortMinutes: metrics.originalEffortMinutes,
@@ -107,11 +105,11 @@ function buildTeamView(
   };
 }
 
-/** Assemble the client-facing view from native data + app state, computing metrics live. */
+/** Assemble the client-facing view from native data + the team's state, computing metrics live. */
 export function buildSprintView(
   native: NativeSprintLike,
-  entry: SprintEntry | null,
-  teams: readonly Team[],
+  entry: TeamSprint | null,
+  team: Team,
   issues: readonly IssueLike[],
   nowMs: number,
 ): SprintView {
@@ -120,28 +118,24 @@ export function buildSprintView(
   const finish = native.finish ?? '1970-01-02';
   const effortIssues = hasDates ? issues.map(toEffortIssue) : [];
 
-  const teamViews = teams.map((team) => {
-    const logins = teamMemberLogins(team);
-    const teamIssues = effortIssues.filter(
-      (i) => i.assigneeId !== null && i.assigneeId !== undefined && logins.has(i.assigneeId),
-    );
-    return buildTeamView(team, entry, teamIssues, start, finish);
-  });
+  const logins = teamMemberLogins(team);
+  const teamIssues = effortIssues.filter(
+    (i) => i.assigneeId !== null && i.assigneeId !== undefined && logins.has(i.assigneeId),
+  );
+  const teamView = buildTeamView(team, entry, teamIssues, start, finish);
 
-  // Sprint totals: capacity is the sum over teams (each planned with its own Focus
-  // Factor); effort aggregates ALL issues, so work assigned outside every team and
-  // unassigned work still show up at the Sprint level.
-  const rawTotal = teamViews.reduce((sum, t) => sum + t.rawCapacityMinutes, 0);
-  const plannedTotal = teamViews.reduce((sum, t) => sum + t.plannedCapacityMinutes, 0);
-  const allEffort = computeMetrics(null, effortIssues, start, finish, 0);
-  const observedTotal = observedFocusFactor(allEffort.completedOriginalEffortMinutes, rawTotal);
+  // Sprint totals: capacity is the team's; effort aggregates ALL issues in the
+  // native Sprint, so work assigned outside the team and unassigned work still
+  // show up at the Sprint level. The observed factor (and completion) therefore
+  // measures everything the Sprint delivered against the team's capacity.
+  const allEffort = computeMetrics(
+    entry?.capacity ?? null,
+    effortIssues,
+    start,
+    finish,
+    teamView.focusFactor,
+  );
   const completed = hasDates && isCompletedSprint(finish, nowMs);
-  const totalsForCompletion = {
-    ...allEffort,
-    rawCapacityMinutes: rawTotal,
-    plannedCapacityMinutes: plannedTotal,
-    observedFocusFactor: observedTotal,
-  };
 
   return {
     id: native.id,
@@ -152,15 +146,15 @@ export function buildSprintView(
     archived: native.archived,
     managed: entry !== null,
     sequence: entry?.sequence ?? 0,
-    teams: teamViews,
-    rawCapacityMinutes: rawTotal,
-    plannedCapacityMinutes: plannedTotal,
+    team: teamView,
+    rawCapacityMinutes: allEffort.rawCapacityMinutes,
+    plannedCapacityMinutes: allEffort.plannedCapacityMinutes,
     originalEffortMinutes: allEffort.originalEffortMinutes,
     currentEffortMinutes: allEffort.currentEffortMinutes,
     completedOriginalEffortMinutes: allEffort.completedOriginalEffortMinutes,
-    observedFocusFactor: observedTotal,
+    observedFocusFactor: allEffort.observedFocusFactor,
     computedAt: nowMs,
-    completion: completed ? buildCompletion(totalsForCompletion, start, finish, nowMs) : null,
+    completion: completed ? buildCompletion(allEffort, start, finish, nowMs) : null,
     issuesMissingOriginalEffort: allEffort.issuesMissingOriginalEffort,
     unassignedEffort: allEffort.unassignedEffort ?? ZERO_EFFORT,
     unresolvedIssueCount: allEffort.unresolvedIssueCount,

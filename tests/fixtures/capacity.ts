@@ -1,11 +1,10 @@
-/** Test fixtures/factories for capacity documents and v3 (teams) sprint entries. */
+/** Test fixtures/factories for capacity documents and v4 (per-team) sprint entries. */
 import type {
   CapacityDocument,
   CapacityRow,
   Participant,
-  SprintEntry,
   Team,
-  TeamSprintEntry,
+  TeamSprint,
 } from '../../src/shared/types.js';
 
 /** Build a CapacityRow with sensible defaults, overridable per test. */
@@ -35,19 +34,35 @@ export function makeParticipant(userId: string, overrides: Partial<Participant> 
   return { userId, enabled: true, allocation: 1, ...overrides };
 }
 
-/** Build a Team with one enabled full-time participant ("alice") by default. */
+/**
+ * Build a Team with one enabled full-time participant ("alice") by default.
+ * Since config v4 the team carries its FULL planning configuration.
+ */
 export function makeTeam(overrides: Partial<Team> = {}): Team {
   return {
     id: 'team-1',
     name: 'Team 1',
     participants: [makeParticipant('alice')],
+    boardId: 'board-1',
+    originalEffortField: 'Original Effort',
+    currentEffortField: 'Current Effort',
+    hoursPerDay: 8,
+    sprintLengthDays: 14,
+    datePolicy: 'continuous',
+    nameTemplate: 'Sprint {sequence}',
+    backlogQuery: '',
+    learningRate: 0.5,
     ...overrides,
   };
 }
 
-/** Build one team's per-Sprint planning state (v3 {@link TeamSprintEntry}). */
-export function makeTeamEntry(overrides: Partial<TeamSprintEntry> = {}): TeamSprintEntry {
+/** Build one team's per-Sprint state (v4 {@link TeamSprint} — the whole entry). */
+export function makeTeamSprint(overrides: Partial<TeamSprint> = {}): TeamSprint {
   return {
+    sequence: 1,
+    name: 'Sprint 1',
+    start: '2026-01-05',
+    finish: '2026-01-18',
     capacityRevision: 1,
     capacity: makeDoc([makeRow()]),
     focusFactor: 0.75,
@@ -55,18 +70,6 @@ export function makeTeamEntry(overrides: Partial<TeamSprintEntry> = {}): TeamSpr
     focusFactorOverride: null,
     excludedFromCalibration: false,
     calibrationSkipReason: null,
-    ...overrides,
-  };
-}
-
-/** Build a v3 SprintEntry with one default team entry under "team-1". */
-export function makeSprintEntry(overrides: Partial<SprintEntry> = {}): SprintEntry {
-  return {
-    sequence: 1,
-    name: 'Sprint 1',
-    start: '2026-01-05',
-    finish: '2026-01-18',
-    teams: { 'team-1': makeTeamEntry() },
     createdAt: 1,
     updatedAt: 1,
     ...overrides,

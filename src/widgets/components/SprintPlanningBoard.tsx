@@ -11,25 +11,22 @@ export interface Lane {
 
 export interface SprintPlanningBoardProps {
   /**
-   * Issues on THIS team's board: assigned to a team member, or unassigned (the
-   * Unassigned lane is shared by every team — that work is up for grabs).
+   * Issues in THIS team's Sprint: assigned to a team member, or unassigned
+   * (unassigned work on the team's own board counts against the team).
    */
   sprintIssues: IssueView[];
   /**
-   * In-Sprint issues assigned OUTSIDE this team (another team or a non-member).
-   * Shown as a compact info strip so no Sprint issue is invisible on every board;
-   * reassigning across teams goes through the issue overlay.
+   * In-Sprint issues assigned to people OUTSIDE the team. Shown as a compact info
+   * strip so no Sprint issue is invisible; reassigning goes through the issue overlay.
    */
   outsideIssues: IssueView[];
-  /** Backlog pool (the team's effective search, not yet in the Sprint). */
+  /** Backlog pool (the team's search, not yet in the Sprint). */
   backlogIssues: IssueView[];
   lanes: Lane[];
   /** The team this board is scoped to; null when the project has a single team. */
   teamName: string | null;
   /** The TEAM's planned capacity (raw × focus factor), for the "what fits" overview. */
   plannedCapacityMinutes: number;
-  /** Sprint-wide figures for the overview line; null when the project has one team. */
-  sprintTotals: { plannedCapacityMinutes: number; committedMinutes: number } | null;
   hoursPerDay: number;
   isManager: boolean;
   /** Whether a backlog search is configured (controls the empty-state copy). */
@@ -64,9 +61,9 @@ const mainColor = 'var(--ring-main-color, #1f8dd6)';
  * owner; drag back to the backlog to remove from the Sprint. Each teammate lane is a
  * capacity **timeline** — a track sized to their available days with committed work
  * filling it — so you can see how the issues fit and who is over. A team-level bar
- * flags when the team's committed work exceeds its planned capacity (for a single-team
- * project, unassigned work counts too, so over-commitment shows even when everyone
- * individually fits); with several teams the same bar also carries the Sprint totals.
+ * flags when the team's committed work exceeds its planned capacity (unassigned work
+ * counts too — since v4 the board and its Sprints belong to the team, so everything
+ * on it is the team's to deliver).
  *
  * Dragging uses the native HTML5 API plus a visible floating "ghost" of the card that
  * follows the cursor, so the motion reads clearly.
@@ -78,7 +75,6 @@ export function SprintPlanningBoard({
   lanes,
   teamName,
   plannedCapacityMinutes,
-  sprintTotals,
   hoursPerDay,
   isManager,
   backlogConfigured,
@@ -127,12 +123,10 @@ export function SprintPlanningBoard({
   const committedFor = (key: string): number =>
     (byLane.get(key) ?? []).reduce((sum, i) => sum + effortOf(i), 0);
 
-  const totalCommitted = sprintIssues.reduce((sum, i) => sum + effortOf(i), 0);
+  // Everything in the team's Sprint — assigned or not — counts against the headline
+  // fit: since v4 the board's Sprints belong to the team alone.
+  const fitCommitted = sprintIssues.reduce((sum, i) => sum + effortOf(i), 0);
   const unassignedCommitted = committedFor(UNASSIGNED);
-  // Single team: unassigned work is necessarily this team's, so it counts against the
-  // headline fit. Several teams: the Unassigned lane is shared, so the headline compares
-  // only the team's OWN committed work; unassigned shows in the subtitle + Sprint totals.
-  const fitCommitted = sprintTotals === null ? totalCommitted : totalCommitted - unassignedCommitted;
   const teamOver = fitCommitted > plannedCapacityMinutes && plannedCapacityMinutes >= 0;
   const outsideCommitted = outsideIssues.reduce((sum, i) => sum + effortOf(i), 0);
 
@@ -380,7 +374,7 @@ export function SprintPlanningBoard({
         </div>
       ) : null}
 
-      {/* Team-level "what fits" overview (carries the Sprint totals when >1 team). */}
+      {/* Team-level "what fits" overview. */}
       <div
         data-test="scp-fit-banner"
         data-over={teamOver ? 'true' : 'false'}
@@ -402,12 +396,7 @@ export function SprintPlanningBoard({
             gray just below the WCAG AA 4.5:1 contrast ratio (measured 4.48). */}
         <span style={{ marginLeft: 8 }}>
           {days(fitCommitted)}d committed of {days(plannedCapacityMinutes)}d planned
-          {unassignedCommitted > 0
-            ? ` · ${days(unassignedCommitted)}d unassigned${sprintTotals !== null ? ' (shared)' : ''}`
-            : ''}
-          {sprintTotals !== null
-            ? ` · Sprint: ${days(sprintTotals.committedMinutes)}d of ${days(sprintTotals.plannedCapacityMinutes)}d planned`
-            : ''}
+          {unassignedCommitted > 0 ? ` · ${days(unassignedCommitted)}d unassigned` : ''}
         </span>
       </div>
 
@@ -501,7 +490,7 @@ export function SprintPlanningBoard({
         })}
       </div>
 
-      {/* Work on this Sprint that belongs to other teams — visible, but planned there. */}
+      {/* Sprint work assigned to people outside the team — visible, not in a lane. */}
       {outsideIssues.length > 0 ? (
         <p
           data-test="scp-outside-team"
@@ -514,8 +503,8 @@ export function SprintPlanningBoard({
           }}
         >
           Assigned outside this team: {outsideIssues.length}{' '}
-          {outsideIssues.length === 1 ? 'issue' : 'issues'} · {days(outsideCommitted)}d (planned on
-          other teams&apos; boards)
+          {outsideIssues.length === 1 ? 'issue' : 'issues'} · {days(outsideCommitted)}d (assigned
+          to non-members — reassign via the issue editor)
         </p>
       ) : null}
 

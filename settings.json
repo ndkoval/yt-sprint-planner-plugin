@@ -7,7 +7,7 @@
     "reminderLeadDays": {
       "type": "integer",
       "title": "Availability reminder lead days",
-      "description": "Default for all projects: remind participants who have not confirmed their availability this many days before a Sprint starts. 0 disables reminders. Each project can override this in its Sprint Capacity settings. Informational only; never blocks planning. Defaults to 3 when unset.",
+      "description": "Default for all teams: remind participants who have not confirmed their availability this many days before a Sprint starts. 0 disables reminders. Each team can override this in its Sprint Capacity settings. Informational only; never blocks planning. Defaults to 3 when unset.",
       "minimum": 0,
       "maximum": 30,
       "default": 3

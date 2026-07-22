@@ -17,10 +17,11 @@ import {
 /**
  * Reel #1 — install & configure, as ONE continuous recording that starts from the target
  * project. We open the project's own Apps settings (where the Sprint Capacity Planner is
- * attached to this project), open the app, then set it up in one place with real interactions:
- * pick the board and effort fields, type a backlog search, split the project into small teams
- * (Platform + Mobile), add a teammate to a team with the picker, set their part-time
- * allocation, and save.
+ * attached to this project), open the app, then set it up in one place with real
+ * interactions. Since config v4 EVERY setting belongs to a team: each team card owns its
+ * board, effort fields, cadence and backlog — we tour Platform's card, type its backlog
+ * search, add a teammate to Mobile with the picker, set a part-time allocation, create a
+ * whole new team, and save.
  */
 test.describe('Install & configure', () => {
   test.beforeAll(() => resetDemoState());
@@ -41,8 +42,9 @@ test.describe('Install & configure', () => {
     const nav = page
       .goto(`/projects/${PROJECT_KEY}?${intro.toString()}`, { waitUntil: 'domcontentloaded' })
       .catch(() => null);
-    await page.waitForTimeout(500);
-    await cap.say('Add the Sprint Capacity Planner to your project — one app, installed from a single ZIP.');
+    // Short: narration must start within ~1.2s of the first frame (QA lead-silence bar).
+    await page.waitForTimeout(250);
+    await cap.say('The Sprint Capacity Planner — one app from a single ZIP, already installed and attached to this project.');
     await nav;
     await page.waitForTimeout(1200);
     await closeTitleCard(page);
@@ -50,7 +52,7 @@ test.describe('Install & configure', () => {
     const appRow = page.getByText('Sprint Capacity Planner').first();
     await expect(appRow).toBeVisible();
     await moveTo(page, appRow);
-    await cap.say('Here it is — attached to this project and active, with no separate service to run.');
+    await cap.say('Here it is — active, with no separate service to run.');
     await settle(page, 1000);
 
     // 2. Open the app's project tab.
@@ -64,32 +66,56 @@ test.describe('Install & configure', () => {
     await cap.say('Everything is set up in one place — open Settings.');
     await humanClick(page, frame.getByRole('button', { name: /^Settings$/ }));
     const sf = await appFrame(page);
-    await expect(sf.getByRole('heading', { name: 'Agile board' })).toBeVisible();
+    await expect(sf.getByRole('heading', { name: 'Teams' })).toBeVisible();
 
-    // 4. Board + effort fields.
-    await moveTo(page, sf.getByRole('heading', { name: 'Agile board' }));
-    await cap.say('Pick the agile board that holds your Sprints.');
-    await settle(page, 700);
-    await moveTo(page, sf.getByRole('heading', { name: /Effort field/i }));
-    await cap.say('Map your effort fields — planned and remaining.');
-    await settle(page, 700);
-
-    // 5. Backlog search — actually type a query.
-    await moveTo(page, sf.getByRole('heading', { name: 'Planning backlog' }));
-    await cap.say('Define the backlog with any YouTrack search — that’s what you plan from.');
-    await humanFill(page, sf.getByLabel('Backlog search query'), `project: ${PROJECT_KEY} State: Open`);
-    await settle(page, 900);
-
-    // 6. Teams — a big project plans as SMALL TEAMS; each has its own members.
+    // 4. Teams first: a big project plans as SMALL TEAMS, and every setting is theirs.
     await moveTo(page, sf.getByRole('heading', { name: 'Teams' }));
-    await cap.say('Big project? Split planning into small teams — here, Platform and Mobile.');
+    await cap.say('Big project? Split planning into small, fully independent teams.');
     // Team names live in input VALUES (not text), so target the card by its stable id.
+    const platformCard = sf.locator('[data-test="scp-team-card"][data-team="team-1"]');
     const mobileCard = sf.locator('[data-test="scp-team-card"][data-team="team-2"]');
     await expect(mobileCard).toBeVisible();
     await settle(page, 700);
 
-    // Add Erin to the Mobile team with the picker, then set a part-time allocation.
-    await cap.say('Each team picks its own members — add Erin to Mobile.');
+    // 5. Each team owns its ENTIRE configuration — anchor on the card's name FIRST,
+    // then tour the scoped headers ("Agile board — Platform") so it is always clear
+    // WHOSE setting is being shown or edited, and so the narrated value ("two-week")
+    // is actually IN FRAME while the words play.
+    await moveTo(page, platformCard.getByLabel('Team name'));
+    await cap.say('This card is Platform’s — and every block inside is labeled with the team it belongs to.');
+    await settle(page, 700);
+    await moveTo(page, platformCard.getByText('Agile board — Platform', { exact: true }));
+    await cap.say('Platform’s own board and effort fields…');
+    await settle(page, 700);
+    // Cursor ON the actual field while its value is narrated (the tall auto-height
+    // iframe defeats viewport assertions — moveTo scrolls the evidence into frame).
+    await moveTo(page, platformCard.getByLabel(/Sprint length/i));
+    await cap.say('…and Platform’s own schedule — fourteen-day Sprints, right here.');
+    await settle(page, 800);
+    await moveTo(page, mobileCard.getByLabel(/Sprint length/i));
+    await cap.say('Mobile — see its label — runs seven-day Sprints on its own board. Completely independent.');
+    await settle(page, 800);
+
+    // 6. …and its own backlog — CLEAR the field first, then type Platform's query in
+    // full view, so the viewer sees exactly what goes in.
+    await moveTo(page, platformCard.getByText('Planning backlog — Platform', { exact: true }));
+    await cap.say('Each team plans from its own backlog. This one is Platform’s — let’s type its query from scratch.');
+    await platformCard.getByLabel('Backlog search query').fill('');
+    await settle(page, 400);
+    await humanFill(
+      page,
+      platformCard.getByLabel('Backlog search query'),
+      `project: ${PROJECT_KEY} State: Open Priority: Normal`,
+    );
+    await settle(page, 900);
+
+    // 7. Add Erin to the Mobile team with the picker, then set a part-time
+    // allocation — anchored on Mobile's card and its scoped Members header.
+    await moveTo(page, mobileCard.getByLabel('Team name'));
+    await cap.say('Now Mobile’s card.');
+    await settle(page, 500);
+    await moveTo(page, mobileCard.getByText('Members — Mobile', { exact: true }));
+    await cap.say('Each team picks its own members — add Erin, right here under Mobile.');
     await humanClick(page, mobileCard.getByRole('combobox', { name: 'Add a team member…' }));
     await settle(page, 500);
     await humanFill(page, sf.getByRole('textbox', { name: 'Filter items' }), 'Erin');
@@ -100,19 +126,26 @@ test.describe('Install & configure', () => {
     await humanFill(page, sf.getByLabel(/Allocation for Erin Park/i), '60');
     await settle(page, 900);
 
-    // 7. Creating a whole new team is one click + a name.
-    await cap.say('Need another squad? Add a team and name it.');
+    // 8. Creating a whole new team is one click + a name (it starts from the first
+    // team's settings, ready to save — every field can then diverge independently).
+    await cap.say('Need another squad? Add a team and name it — it starts ready to plan, and every setting can diverge later.');
     await humanClick(page, sf.getByRole('button', { name: 'Add team', exact: true }));
     const newCard = sf.locator('[data-test="scp-team-card"]').nth(2);
     await expect(newCard).toBeVisible();
     await humanFill(page, newCard.getByLabel('Team name'), 'Design');
+    // The scoped headers relabel themselves live as the name is typed. Anchor on a
+    // LOWER header so "Agile board — Design" sits above the caption zone (the
+    // caption box must never cover the very evidence being narrated).
+    await moveTo(page, newCard.getByText('Schedule — Design', { exact: true }));
+    await expect(newCard.getByText('Agile board — Design', { exact: true })).toBeVisible();
+    await cap.say('And every block instantly labels itself as Design’s.');
     await settle(page, 800);
 
-    // 8. Save.
+    // 9. Save.
     await cap.say('Save — and every team is ready to plan.');
     await humanClick(page, sf.getByRole('button', { name: 'Save settings' }));
     await expect(sf.getByText('Settings saved.')).toBeVisible();
-    await settle(page, 1500);
+    await settle(page, 800);
 
     await info.attach('setup.png', { body: await page.screenshot(), contentType: 'image/png' });
     const vtt = await cap.writeVtt('01-setup');

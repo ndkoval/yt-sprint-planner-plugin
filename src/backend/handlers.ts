@@ -11,11 +11,13 @@
  * reads and writes it through the current user's own REST session (`host.fetchYouTrack`),
  * so YouTrack enforces the caller's real permissions.
  *
- * Team scoping: every team-scoped mutation resolves its target team from the config —
- * an explicit `teamId`, or the config's ONLY team when omitted (ambiguous with several
- * teams → VALIDATION_FAILED). Teams added to the config after a Sprint was registered
- * are materialized lazily (with capacityRevision 0, matching the empty view the client
- * synthesizes) on their first write or on the next sprint-register. Entries of teams
+ * Team scoping (config v4): every team owns its whole configuration AND its own
+ * Sprint map (`data.teams[teamId].sprints[sprintId]`) — teams may plan on different
+ * boards with different cadences, so nothing is shared between them. A team-scoped
+ * request resolves its target team from the config — an explicit `teamId`, or the
+ * config's ONLY team when omitted (ambiguous with several teams → VALIDATION_FAILED).
+ * A Sprint is "managed" PER TEAM: writes against a Sprint the team never registered
+ * fail with NOT_FOUND (the planner registers Sprints it creates). Entries of teams
  * REMOVED from the config are retained in storage (non-destructive) but never touched.
  */
 import {
@@ -49,13 +51,7 @@ import type {
   SprintDataResponse,
   UserPrefs,
 } from '../shared/api.js';
-import type {
-  CapacityRow,
-  ProjectConfig,
-  SprintEntry,
-  Team,
-  TeamSprintEntry,
-} from '../shared/types.js';
+import type { CapacityRow, ProjectConfig, Team, TeamSprint } from '../shared/types.js';
 import { AppError, capacityConflict, configConflict, forbidden, notConfigured, notFound } from './errors.js';
 import type { BackendEnv, BackendProject, BackendUser } from './env.js';
 import {
@@ -107,16 +103,23 @@ function requireTeam(config: ProjectConfig, teamId: string | undefined): Team {
   );
 }
 
-function requireEntry(ctx: RequestContext, sprintId: string): SprintEntry {
-  const data = loadSprintData(ctx.project);
-  const entry = data.sprints[sprintId];
-  if (!entry) throw notFound(`Sprint ${sprintId}`);
+/** The team's entry for a Sprint; NOT_FOUND when the team never registered it. */
+function requireTeamSprint(ctx: RequestContext, teamId: string, sprintId: string): TeamSprint {
+  const entry = loadSprintData(ctx.project).teams[teamId]?.sprints[sprintId];
+  if (!entry) throw notFound(`Sprint ${sprintId} (team ${teamId})`);
   return entry;
 }
 
-function saveEntry(ctx: RequestContext, sprintId: string, entry: SprintEntry): SprintEntry {
+function saveTeamSprint(
+  ctx: RequestContext,
+  teamId: string,
+  sprintId: string,
+  entry: TeamSprint,
+): TeamSprint {
   const data = loadSprintData(ctx.project);
-  data.sprints[sprintId] = entry;
+  const teamSprints = data.teams[teamId] ?? { sprints: {} };
+  teamSprints.sprints[sprintId] = entry;
+  data.teams[teamId] = teamSprints;
   saveSprintData(ctx.project, data);
   return entry;
 }
@@ -147,11 +150,11 @@ export function putConfig(ctx: RequestContext, body: PutConfigRequest): ConfigRe
   const currentRevision = existing?.revision ?? 0;
   if (body.expectedRevision !== currentRevision) throw configConflict();
   const newRevision = currentRevision + 1;
-  saveConfigDocument(ctx.project, { version: 3, revision: newRevision, config: body.config });
-  // Roster changes take effect IMMEDIATELY: seed entries for teams added to the
-  // config and capacity rows for participants who joined, across every managed
-  // Sprint — so new members/teams show up on the planner right after saving,
-  // not only after the next sprint-register.
+  saveConfigDocument(ctx.project, { version: 4, revision: newRevision, config: body.config });
+  // Roster changes take effect IMMEDIATELY: capacity rows for participants who
+  // joined a team are backfilled across the team's managed Sprints — so new
+  // members show up on the planner right after saving, not only after the next
+  // sprint-register. (A brand-new team has no Sprints yet — it registers its own.)
   reconcileSprintsWithConfig(ctx, body.config);
   return {
     configured: true,
@@ -164,43 +167,28 @@ export function putConfig(ctx: RequestContext, body: PutConfigRequest): ConfigRe
 }
 
 /**
- * Backfill every managed Sprint's per-team state against the CURRENT config:
- * config teams missing an entry are seeded; enabled participants missing a row are
- * added (revision bumps per changed team). Existing rows, removed teams' entries
- * and everything the user customized stay untouched.
+ * Backfill every team's managed Sprints against the CURRENT config: enabled
+ * participants missing a row are added (revision bumps per changed Sprint).
+ * Existing rows, removed teams' entries and everything the user customized stay
+ * untouched.
  */
 function reconcileSprintsWithConfig(ctx: RequestContext, config: ProjectConfig): void {
   const data = loadSprintData(ctx.project);
   const now = ctx.env.now();
   let anyChanged = false;
-  for (const [sprintId, entry] of Object.entries(data.sprints)) {
-    const teams: Record<string, TeamSprintEntry> = { ...entry.teams };
-    let changed = false;
-    for (const team of config.teams) {
-      const teamEntry = teams[team.id];
-      if (!teamEntry) {
-        teams[team.id] = seedTeamEntry(
-          ctx,
-          config,
-          team,
-          entry.start,
-          entry.finish,
-          now,
-          { focusFactor: DEFAULT_FOCUS_FACTOR, focusFactorSource: 'bootstrap' },
-          1,
-        );
-        changed = true;
-        continue;
-      }
+  for (const team of config.teams) {
+    const teamSprints = data.teams[team.id];
+    if (!teamSprints) continue;
+    for (const [sprintId, entry] of Object.entries(teamSprints.sprints)) {
       const seeded = seedCapacityDocument(
         team,
-        config.hoursPerDay,
+        team.hoursPerDay,
         participantNames(ctx, team),
         entry.start,
         entry.finish,
         now,
       );
-      const rows: Record<string, CapacityRow> = { ...teamEntry.capacity.rows };
+      const rows: Record<string, CapacityRow> = { ...entry.capacity.rows };
       let rowsAdded = false;
       for (const [login, row] of Object.entries(seeded.rows)) {
         if (!(login in rows)) {
@@ -209,17 +197,14 @@ function reconcileSprintsWithConfig(ctx: RequestContext, config: ProjectConfig):
         }
       }
       if (rowsAdded) {
-        teams[team.id] = {
-          ...teamEntry,
-          capacity: { ...teamEntry.capacity, rows },
-          capacityRevision: teamEntry.capacityRevision + 1,
+        teamSprints.sprints[sprintId] = {
+          ...entry,
+          capacity: { ...entry.capacity, rows },
+          capacityRevision: entry.capacityRevision + 1,
+          updatedAt: now,
         };
-        changed = true;
+        anyChanged = true;
       }
-    }
-    if (changed) {
-      data.sprints[sprintId] = { ...entry, teams, updatedAt: now };
-      anyChanged = true;
     }
   }
   if (anyChanged) saveSprintData(ctx.project, data);
@@ -229,8 +214,10 @@ function reconcileSprintsWithConfig(ctx: RequestContext, config: ProjectConfig):
 // Sprint app-state
 // ---------------------------------------------------------------------------
 
-export function getSprintData(ctx: RequestContext): SprintDataResponse {
-  return { sprints: loadSprintData(ctx.project).sprints };
+export function getSprintData(ctx: RequestContext, teamId: string | undefined): SprintDataResponse {
+  const { config } = requireConfig(ctx);
+  const team = requireTeam(config, teamId);
+  return { sprints: loadSprintData(ctx.project).teams[team.id]?.sprints ?? {} };
 }
 
 /** Display names for a team's enabled participants (login fallback). */
@@ -248,215 +235,121 @@ function allocationByUser(team: Team): Record<string, number> {
   return out;
 }
 
-/** A fresh per-team entry for a Sprint (used by register and by lazy materialization). */
-function seedTeamEntry(
-  ctx: RequestContext,
-  config: ProjectConfig,
-  team: Team,
-  start: string,
-  finish: string,
-  now: number,
-  seed: { focusFactor: number; focusFactorSource: TeamSprintEntry['focusFactorSource'] },
-  capacityRevision: number,
-): TeamSprintEntry {
-  return {
-    capacityRevision,
-    capacity: seedCapacityDocument(
-      team,
-      config.hoursPerDay,
-      participantNames(ctx, team),
-      start,
-      finish,
-      now,
-    ),
-    focusFactor: seed.focusFactor,
-    focusFactorSource: seed.focusFactorSource,
-    focusFactorOverride: null,
-    excludedFromCalibration: false,
-    calibrationSkipReason: null,
-  };
-}
-
 /**
- * The team's entry in a Sprint, materialized lazily when the team joined the config
- * after the Sprint was registered. The lazy entry starts at capacityRevision 0 —
- * matching the empty view the client synthesizes — so the caller's expectedRevision 0
- * passes and the first write bumps it to 1.
- */
-function materializeTeamEntry(
-  ctx: RequestContext,
-  config: ProjectConfig,
-  team: Team,
-  entry: SprintEntry,
-): TeamSprintEntry {
-  return (
-    entry.teams[team.id] ??
-    seedTeamEntry(
-      ctx,
-      config,
-      team,
-      entry.start,
-      entry.finish,
-      ctx.env.now(),
-      { focusFactor: DEFAULT_FOCUS_FACTOR, focusFactorSource: 'bootstrap' },
-      0,
-    )
-  );
-}
-
-/**
- * Upsert the app state for a native Sprint. New entries get a sequence and one seeded
- * {@link TeamSprintEntry} per config team; existing entries refresh their name/date
- * snapshots — when dates change, each team's non-customized rows track the recomputed
- * default. Enabled participants missing a row, and config teams missing an entry, are
- * added on every call, so config changes propagate. Entries of removed teams are kept.
+ * Upsert one TEAM's app state for a native Sprint on the team's board. A new entry
+ * gets the team's next sequence and a seeded capacity document; an existing entry
+ * refreshes its name/date snapshots — when dates change, non-customized rows track
+ * the recomputed default. Enabled participants missing a row are added on every
+ * call, so roster changes propagate.
  */
 export function registerSprint(
   ctx: RequestContext,
   body: RegisterSprintRequest,
-): { sprintId: string; entry: SprintEntry } {
+): { sprintId: string; teamId: string; entry: TeamSprint } {
   const { config, principal } = requireConfig(ctx);
   if (!canCreateSprint(principal)) throw forbidden('Only managers can plan Sprints.');
   if (body.sprint.finish <= body.sprint.start) {
     throw new AppError('VALIDATION_FAILED', 'Finish must be after start.');
   }
+  const team = requireTeam(config, body.teamId);
 
   const now = ctx.env.now();
   const data = loadSprintData(ctx.project);
-  const existing = data.sprints[body.sprint.id];
+  const teamSprints = data.teams[team.id] ?? { sprints: {} };
+  const existing = teamSprints.sprints[body.sprint.id];
 
-  const factorSeed = (team: Team): { focusFactor: number; focusFactorSource: TeamSprintEntry['focusFactorSource'] } => {
-    const seed = body.teams?.[team.id];
-    return {
-      focusFactor: seed?.focusFactor ?? DEFAULT_FOCUS_FACTOR,
-      focusFactorSource: seed?.focusFactorSource ?? 'bootstrap',
-    };
-  };
-
-  let entry: SprintEntry;
+  let entry: TeamSprint;
   if (!existing) {
-    const teams: Record<string, TeamSprintEntry> = {};
-    for (const team of config.teams) {
-      teams[team.id] = seedTeamEntry(
-        ctx,
-        config,
-        team,
-        body.sprint.start,
-        body.sprint.finish,
-        now,
-        factorSeed(team),
-        1,
-      );
-    }
     entry = {
-      sequence: nextSequence(Object.values(data.sprints).map((e) => e.sequence)),
+      sequence: nextSequence(Object.values(teamSprints.sprints).map((e) => e.sequence)),
       name: body.sprint.name,
       start: body.sprint.start,
       finish: body.sprint.finish,
-      teams,
+      capacityRevision: 1,
+      capacity: seedCapacityDocument(
+        team,
+        team.hoursPerDay,
+        participantNames(ctx, team),
+        body.sprint.start,
+        body.sprint.finish,
+        now,
+      ),
+      focusFactor: body.seed?.focusFactor ?? DEFAULT_FOCUS_FACTOR,
+      focusFactorSource: body.seed?.focusFactorSource ?? 'bootstrap',
+      focusFactorOverride: null,
+      excludedFromCalibration: false,
+      calibrationSkipReason: null,
       createdAt: now,
       updatedAt: now,
     };
   } else {
     const datesChanged =
       existing.start !== body.sprint.start || existing.finish !== body.sprint.finish;
-    const teams: Record<string, TeamSprintEntry> = { ...existing.teams };
-    for (const team of config.teams) {
-      const teamEntry = teams[team.id];
-      if (!teamEntry) {
-        // A team added to the config after this Sprint was registered.
-        teams[team.id] = seedTeamEntry(
-          ctx,
-          config,
-          team,
-          body.sprint.start,
-          body.sprint.finish,
-          now,
-          factorSeed(team),
-          1,
-        );
-        continue;
-      }
-      let capacity = teamEntry.capacity;
-      if (datesChanged) {
-        capacity = reapplyDefaults(
-          capacity,
-          body.sprint.start,
-          body.sprint.finish,
-          config.hoursPerDay,
-          allocationByUser(team),
-        );
-      }
-      // Add rows for enabled participants that joined the team after seeding.
-      const seeded = seedCapacityDocument(
-        team,
-        config.hoursPerDay,
-        participantNames(ctx, team),
+    let capacity = existing.capacity;
+    if (datesChanged) {
+      capacity = reapplyDefaults(
+        capacity,
         body.sprint.start,
         body.sprint.finish,
-        now,
+        team.hoursPerDay,
+        allocationByUser(team),
       );
-      const rows: Record<string, CapacityRow> = { ...capacity.rows };
-      let rowsAdded = false;
-      for (const [login, row] of Object.entries(seeded.rows)) {
-        if (!(login in rows)) {
-          rows[login] = row;
-          rowsAdded = true;
-        }
-      }
-      const capacityChanged = datesChanged || rowsAdded;
-      teams[team.id] = {
-        ...teamEntry,
-        capacity: { ...capacity, rows },
-        capacityRevision: capacityChanged
-          ? teamEntry.capacityRevision + 1
-          : teamEntry.capacityRevision,
-      };
     }
+    // Add rows for enabled participants that joined the team after seeding.
+    const seeded = seedCapacityDocument(
+      team,
+      team.hoursPerDay,
+      participantNames(ctx, team),
+      body.sprint.start,
+      body.sprint.finish,
+      now,
+    );
+    const rows: Record<string, CapacityRow> = { ...capacity.rows };
+    let rowsAdded = false;
+    for (const [login, row] of Object.entries(seeded.rows)) {
+      if (!(login in rows)) {
+        rows[login] = row;
+        rowsAdded = true;
+      }
+    }
+    const capacityChanged = datesChanged || rowsAdded;
     entry = {
       ...existing,
       name: body.sprint.name,
       start: body.sprint.start,
       finish: body.sprint.finish,
-      teams,
+      capacity: { ...capacity, rows },
+      capacityRevision: capacityChanged
+        ? existing.capacityRevision + 1
+        : existing.capacityRevision,
       updatedAt: now,
     };
   }
 
-  data.sprints[body.sprint.id] = entry;
+  teamSprints.sprints[body.sprint.id] = entry;
+  data.teams[team.id] = teamSprints;
   saveSprintData(ctx.project, data);
-  return { sprintId: body.sprint.id, entry };
+  return { sprintId: body.sprint.id, teamId: team.id, entry };
 }
 
 // ---------------------------------------------------------------------------
 // Capacity
 // ---------------------------------------------------------------------------
 
-/** Persist an updated team entry inside its Sprint entry. */
-function withTeamEntry(
-  entry: SprintEntry,
-  teamId: string,
-  teamEntry: TeamSprintEntry,
-  now: number,
-): SprintEntry {
-  return { ...entry, teams: { ...entry.teams, [teamId]: teamEntry }, updatedAt: now };
-}
-
 export function writeCapacity(
   ctx: RequestContext,
   body: CapacityWriteRequest,
-): { sprintId: string; entry: SprintEntry } {
+): { sprintId: string; teamId: string; entry: TeamSprint } {
   const { config, principal } = requireConfig(ctx);
   const team = requireTeam(config, body.teamId);
   const target = body.target === 'me' ? ctx.user.login : body.target.userId;
   if (!canEditCapacityRow(principal, { targetUserId: target })) {
     throw forbidden('You can only edit your own availability.');
   }
-  const entry = requireEntry(ctx, body.sprintId);
-  const teamEntry = materializeTeamEntry(ctx, config, team, entry);
-  if (body.expectedRevision !== teamEntry.capacityRevision) throw capacityConflict();
+  const entry = requireTeamSprint(ctx, team.id, body.sprintId);
+  if (body.expectedRevision !== entry.capacityRevision) throw capacityConflict();
 
-  let row = teamEntry.capacity.rows[target];
+  let row = entry.capacity.rows[target];
   if (!row) {
     // A participant added to the team after this Sprint was seeded gets a row on
     // their first edit; non-members of THIS team have no capacity here.
@@ -464,7 +357,7 @@ export function writeCapacity(
     if (!participant) throw notFound(`Capacity row for user ${target} in team ${team.name}`);
     const seeded = seedCapacityDocument(
       team,
-      config.hoursPerDay,
+      team.hoursPerDay,
       { [target]: ctx.env.findUserNameByLogin(target) ?? target },
       entry.start,
       entry.finish,
@@ -482,29 +375,31 @@ export function writeCapacity(
   }
   if (body.note !== undefined) updated.note = body.note;
 
-  const nextTeamEntry: TeamSprintEntry = {
-    ...teamEntry,
-    capacity: { ...teamEntry.capacity, rows: { ...teamEntry.capacity.rows, [target]: updated } },
-    capacityRevision: teamEntry.capacityRevision + 1,
+  const next: TeamSprint = {
+    ...entry,
+    capacity: { ...entry.capacity, rows: { ...entry.capacity.rows, [target]: updated } },
+    capacityRevision: entry.capacityRevision + 1,
+    updatedAt: now,
   };
-  const next = withTeamEntry(entry, team.id, nextTeamEntry, now);
-  return { sprintId: body.sprintId, entry: saveEntry(ctx, body.sprintId, next) };
+  return {
+    sprintId: body.sprintId,
+    teamId: team.id,
+    entry: saveTeamSprint(ctx, team.id, body.sprintId, next),
+  };
 }
 
 export function resetCapacity(
   ctx: RequestContext,
   body: CapacityResetRequest,
-): { sprintId: string; entry: SprintEntry } {
+): { sprintId: string; teamId: string; entry: TeamSprint } {
   const { config, principal } = requireConfig(ctx);
   const team = requireTeam(config, body.teamId);
   if (!canEditCapacityRow(principal, { targetUserId: body.userId })) {
     throw forbidden('You can only reset your own availability.');
   }
-  const entry = requireEntry(ctx, body.sprintId);
-  const teamEntry = entry.teams[team.id];
-  if (!teamEntry) throw notFound(`Capacity for team ${team.name} in Sprint ${body.sprintId}`);
-  if (body.expectedRevision !== teamEntry.capacityRevision) throw capacityConflict();
-  const row = teamEntry.capacity.rows[body.userId];
+  const entry = requireTeamSprint(ctx, team.id, body.sprintId);
+  if (body.expectedRevision !== entry.capacityRevision) throw capacityConflict();
+  const row = entry.capacity.rows[body.userId];
   if (!row) throw notFound(`Capacity row for user ${body.userId}`);
 
   const now = ctx.env.now();
@@ -515,13 +410,17 @@ export function resetCapacity(
     updatedAt: now,
     updatedBy: ctx.user.login,
   };
-  const nextTeamEntry: TeamSprintEntry = {
-    ...teamEntry,
-    capacity: { ...teamEntry.capacity, rows: { ...teamEntry.capacity.rows, [body.userId]: updated } },
-    capacityRevision: teamEntry.capacityRevision + 1,
+  const next: TeamSprint = {
+    ...entry,
+    capacity: { ...entry.capacity, rows: { ...entry.capacity.rows, [body.userId]: updated } },
+    capacityRevision: entry.capacityRevision + 1,
+    updatedAt: now,
   };
-  const next = withTeamEntry(entry, team.id, nextTeamEntry, now);
-  return { sprintId: body.sprintId, entry: saveEntry(ctx, body.sprintId, next) };
+  return {
+    sprintId: body.sprintId,
+    teamId: team.id,
+    entry: saveTeamSprint(ctx, team.id, body.sprintId, next),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -531,46 +430,52 @@ export function resetCapacity(
 export function overrideFocusFactor(
   ctx: RequestContext,
   body: OverrideFocusFactorRequest,
-): { sprintId: string; entry: SprintEntry } {
+): { sprintId: string; teamId: string; entry: TeamSprint } {
   const { config, principal } = requireConfig(ctx);
   if (!canOverrideFocusFactor(principal)) throw forbidden('Only managers can override.');
   const team = requireTeam(config, body.teamId);
-  const entry = requireEntry(ctx, body.sprintId);
-  const teamEntry = materializeTeamEntry(ctx, config, team, entry);
+  const entry = requireTeamSprint(ctx, team.id, body.sprintId);
   const now = ctx.env.now();
-  const nextTeamEntry: TeamSprintEntry = {
-    ...teamEntry,
+  const next: TeamSprint = {
+    ...entry,
     focusFactor: body.newValue,
     focusFactorSource: 'manual',
     focusFactorOverride: {
       reason: body.reason,
-      oldValue: teamEntry.focusFactor,
+      oldValue: entry.focusFactor,
       newValue: body.newValue,
       userId: ctx.user.login,
       timestamp: now,
     },
+    updatedAt: now,
   };
-  const next = withTeamEntry(entry, team.id, nextTeamEntry, now);
-  return { sprintId: body.sprintId, entry: saveEntry(ctx, body.sprintId, next) };
+  return {
+    sprintId: body.sprintId,
+    teamId: team.id,
+    entry: saveTeamSprint(ctx, team.id, body.sprintId, next),
+  };
 }
 
 export function setCalibration(
   ctx: RequestContext,
   body: SetCalibrationRequest,
-): { sprintId: string; entry: SprintEntry } {
+): { sprintId: string; teamId: string; entry: TeamSprint } {
   const { config, principal } = requireConfig(ctx);
   if (!canChangeCalibration(principal)) throw forbidden('Only managers can change calibration.');
   const team = requireTeam(config, body.teamId);
-  const entry = requireEntry(ctx, body.sprintId);
-  const teamEntry = materializeTeamEntry(ctx, config, team, entry);
+  const entry = requireTeamSprint(ctx, team.id, body.sprintId);
   const now = ctx.env.now();
-  const nextTeamEntry: TeamSprintEntry = {
-    ...teamEntry,
+  const next: TeamSprint = {
+    ...entry,
     excludedFromCalibration: body.excluded,
     calibrationSkipReason: body.excluded ? (body.reason ?? '') : null,
+    updatedAt: now,
   };
-  const next = withTeamEntry(entry, team.id, nextTeamEntry, now);
-  return { sprintId: body.sprintId, entry: saveEntry(ctx, body.sprintId, next) };
+  return {
+    sprintId: body.sprintId,
+    teamId: team.id,
+    entry: saveTeamSprint(ctx, team.id, body.sprintId, next),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -583,18 +488,40 @@ export function getPrefs(user: BackendUser): UserPrefs {
   const raw = user.getProperty(PREFS_PROP);
   if (raw === null) return {};
   try {
-    const parsed = JSON.parse(raw) as { lastProjectKey?: unknown };
-    return typeof parsed.lastProjectKey === 'string'
-      ? { lastProjectKey: parsed.lastProjectKey }
-      : {};
+    const parsed = JSON.parse(raw) as { lastProjectKey?: unknown; lastTeamByProject?: unknown };
+    const prefs: UserPrefs = {};
+    if (typeof parsed.lastProjectKey === 'string') prefs.lastProjectKey = parsed.lastProjectKey;
+    if (
+      parsed.lastTeamByProject !== null &&
+      typeof parsed.lastTeamByProject === 'object' &&
+      !Array.isArray(parsed.lastTeamByProject)
+    ) {
+      const map: Record<string, string> = {};
+      for (const [key, value] of Object.entries(parsed.lastTeamByProject as object)) {
+        if (typeof value === 'string') map[key] = value;
+      }
+      if (Object.keys(map).length > 0) prefs.lastTeamByProject = map;
+    }
+    return prefs;
   } catch {
     return {};
   }
 }
 
+/** Merge-update the caller's prefs; the property is removed entirely when empty. */
 export function savePrefs(user: BackendUser, body: SavePrefsRequest): UserPrefs {
-  const prefs: UserPrefs =
-    body.lastProjectKey === null ? {} : { lastProjectKey: body.lastProjectKey };
+  const prefs = getPrefs(user);
+  if (body.lastProjectKey !== undefined) {
+    if (body.lastProjectKey === null) delete prefs.lastProjectKey;
+    else prefs.lastProjectKey = body.lastProjectKey;
+  }
+  if (body.lastTeam !== undefined) {
+    const map = { ...(prefs.lastTeamByProject ?? {}) };
+    if (body.lastTeam.teamId === null) delete map[body.lastTeam.projectKey];
+    else map[body.lastTeam.projectKey] = body.lastTeam.teamId;
+    if (Object.keys(map).length > 0) prefs.lastTeamByProject = map;
+    else delete prefs.lastTeamByProject;
+  }
   user.setProperty(PREFS_PROP, Object.keys(prefs).length > 0 ? JSON.stringify(prefs) : null);
   return prefs;
 }
@@ -611,7 +538,7 @@ export function getExport(ctx: RequestContext): ExportBundle {
     exportedAt: ctx.env.now(),
     configRevision: doc?.revision ?? 0,
     config: doc?.config ?? null,
-    sprints: loadSprintData(ctx.project).sprints,
+    teams: loadSprintData(ctx.project).teams,
   };
 }
 
@@ -636,28 +563,42 @@ export function postImport(ctx: RequestContext, body: ImportRequest): ImportResu
     throw new AppError('VALIDATION_FAILED', 'The bundle config is not a supported document.');
   }
 
+  // v4 bundles carry `teams` (per-team Sprint maps); older exports carry `sprints`
+  // (bare entry maps without a version — v3 entries hold a `teams` map, v2 entries
+  // are flat). Wrap accordingly and let the shared migration chain lift everything
+  // to the current version.
+  const rawTeams = body.bundle.teams;
   const rawSprints = body.bundle.sprints;
-  if (rawSprints === null || typeof rawSprints !== 'object' || Array.isArray(rawSprints)) {
-    throw new AppError('VALIDATION_FAILED', 'The bundle sprints must be an object.');
+  let wrapped: Record<string, unknown>;
+  if (rawTeams !== undefined && rawTeams !== null) {
+    if (typeof rawTeams !== 'object' || Array.isArray(rawTeams)) {
+      throw new AppError('VALIDATION_FAILED', 'The bundle teams must be an object.');
+    }
+    wrapped = { version: 4, teams: rawTeams };
+  } else {
+    if (rawSprints === null || rawSprints === undefined || typeof rawSprints !== 'object' || Array.isArray(rawSprints)) {
+      throw new AppError('VALIDATION_FAILED', 'The bundle sprints must be an object.');
+    }
+    const entries = Object.values(rawSprints as Record<string, unknown>);
+    const looksV3 =
+      entries.length === 0 ||
+      entries.every((e) => e !== null && typeof e === 'object' && 'teams' in e);
+    wrapped = { version: looksV3 ? 3 : 2, sprints: rawSprints };
   }
-  // Bundles carry bare entry maps without a version; infer the era from the entry
-  // shape (v3 entries have a `teams` map) — an empty map is trivially current.
-  const entries = Object.values(rawSprints as Record<string, unknown>);
-  const looksV3 =
-    entries.length === 0 ||
-    entries.every((e) => e !== null && typeof e === 'object' && 'teams' in e);
-  const sprintDoc = normalizeSprintData({ version: looksV3 ? 3 : 2, sprints: rawSprints });
+  const sprintDoc = normalizeSprintData(wrapped);
   if (sprintDoc === null) {
     throw new AppError('VALIDATION_FAILED', 'The bundle sprints are not a supported document.');
   }
 
-  const sprintCount = Object.keys(sprintDoc.sprints).length;
+  const sprintCount = new Set(
+    Object.values(sprintDoc.teams).flatMap((t) => Object.keys(t.sprints)),
+  ).size;
   if (body.dryRun) {
     return { applied: false, sprintCount, configured: configDoc !== null };
   }
   if (configDoc) {
     saveConfigDocument(ctx.project, {
-      version: 3,
+      version: 4,
       revision: (doc?.revision ?? 0) + 1,
       config: configDoc.config,
     });
@@ -670,22 +611,23 @@ export function getDiagnostics(ctx: RequestContext, correlationId: string): Diag
   const doc = loadConfigDocument(ctx.project);
   const principal = resolvePrincipal(ctx);
   if (!canReadDiagnostics(principal)) throw forbidden('Only managers can read diagnostics.');
-  const sprints = loadSprintData(ctx.project).sprints;
+  const teams = loadSprintData(ctx.project).teams;
+  const sprintIds = new Set(Object.values(teams).flatMap((t) => Object.keys(t.sprints)));
   return {
     correlationId,
     configured: doc !== null,
     configRevision: doc?.revision ?? 0,
-    managedSprintCount: Object.keys(sprints).length,
-    sprints: Object.entries(sprints)
-      .map(([id, e]) => ({
-        id,
-        name: e.name,
-        sequence: e.sequence,
-        teams: Object.entries(e.teams).map(([teamId, t]) => ({
-          teamId,
-          capacityRevision: t.capacityRevision,
-        })),
-      }))
-      .sort((a, b) => a.sequence - b.sequence),
+    managedSprintCount: sprintIds.size,
+    teams: Object.entries(teams).map(([teamId, t]) => ({
+      teamId,
+      sprints: Object.entries(t.sprints)
+        .map(([id, e]) => ({
+          id,
+          name: e.name,
+          sequence: e.sequence,
+          capacityRevision: e.capacityRevision,
+        }))
+        .sort((a, b) => a.sequence - b.sequence),
+    })),
   };
 }
