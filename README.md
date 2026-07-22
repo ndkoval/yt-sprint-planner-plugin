@@ -26,6 +26,7 @@ A YouTrack App that adds **capacity planning, computed delivery metrics, and a o
 - **Computed metrics** — capacity (raw/planned/remaining) and effort (original/current/completed) per team, plus missing-effort warnings.
 - **Learned Focus Factor** — observed per completed Sprint and calibrated per team.
 - **One-click next Sprint** — created per team on the team's own board: computed name, dates, sequence, seeded capacity, and optional carry-over.
+- **Sprint-field mirroring** — teams that also track Sprints in an enum custom field keep it in sync automatically: pulling an issue into the Sprint (assigned or unassigned) sets the field to the Sprint's name, dropping it back to the backlog clears it, and carry-over rewrites it to the new Sprint.
 - **No custom permission scheme** — whoever can change the project's settings in YouTrack (`UPDATE_PROJECT`) manages its planning; members edit their own availability, from the settings tab or the global **Sprint Capacity Planner** menu item.
 - **Manager diagnostics + export/import** — a data-health view and a versioned JSON backup bundle (old bundles import across schema upgrades).
 
@@ -59,7 +60,7 @@ Requires YouTrack **2024.3+** (Cloud or Server).
 
 ## Status
 
-**v0.4.0 (unreleased):** teams are now fully separated — every planning setting (board, cadence, effort fields, backlog, reminders) belongs to a team, implemented across the domain, backend, widgets and the reminder workflow, with existing v2/v3 data migrated automatically on read. Verified end-to-end against a real YouTrack **2025.3**: 275 unit + 101 contract tests, the full 32-test Playwright E2E suite (per-team boards, cadences and backlogs included), and the three demo reels re-recorded against the per-team model. Known limitations are tracked as [`known-limitation`](https://github.com/ndkoval/yt-sprint-planner-plugin/issues?q=is%3Aissue+label%3Aknown-limitation) issues.
+**v0.4.0:** teams are now fully separated — every planning setting (board, cadence, effort fields, backlog, reminders, optional Sprint-mirror field) belongs to a team, implemented across the domain, backend, widgets and the reminder workflow, with existing v2/v3 data migrated automatically on read. Verified end-to-end against a real YouTrack **2025.3**: 275 unit + 101 contract tests, the full 34-test Playwright E2E suite (per-team boards, cadences, backlogs and Sprint-field mirroring included), and the three demo reels re-recorded against the per-team model. Known limitations are tracked as [`known-limitation`](https://github.com/ndkoval/yt-sprint-planner-plugin/issues?q=is%3Aissue+label%3Aknown-limitation) issues.
 
 ## Contributing
 

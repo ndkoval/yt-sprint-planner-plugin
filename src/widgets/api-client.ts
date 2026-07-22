@@ -414,7 +414,10 @@ export class ApiClient {
   /**
    * Plan an issue (a board drag): pull it into/out of the team's Sprint and set its
    * assignee in one action. Runs as the current user, so YouTrack enforces the
-   * caller's board and issue permissions. Returns the refreshed SprintView.
+   * caller's board and issue permissions. When the team mirrors Sprints in an enum
+   * field ({@link Team.sprintFieldName}), EVERY planning move keeps it in sync:
+   * into the Sprint (assigned or unassigned) → field = Sprint name; back to the
+   * backlog → field cleared. Returns the refreshed SprintView.
    */
   async planIssue(
     sprintId: string,
@@ -433,10 +436,46 @@ export class ApiClient {
     if (body.inSprint) {
       if (!alreadyInSprint) await this.yt.addIssueToSprint(team.boardId, sprintId, issueId);
       await this.yt.setIssueAssignee(issueId, body.assigneeId);
+      await this.syncSprintField(team, [issueId], sprintId);
     } else if (alreadyInSprint) {
       await this.yt.removeIssueFromSprint(team.boardId, sprintId, issueId);
+      // Clear ONLY when this move actually removed the issue from THIS Sprint —
+      // a no-op drop must not blank a mirror value some other Sprint still owns.
+      await this.syncSprintField(team, [issueId], null);
     }
     return this.getSprint(sprintId, team.id);
+  }
+
+  /**
+   * Mirror Sprint membership into the team's optional enum field: value = the
+   * native Sprint's name (`sprintId` null clears the field). The value is ensured
+   * in the field's bundle first. Sync failures never break the planning move
+   * itself — the field write reruns on the next move.
+   */
+  private async syncSprintField(
+    team: Team,
+    issueIds: readonly string[],
+    sprintId: string | null,
+  ): Promise<void> {
+    const fieldName = (team.sprintFieldName ?? '').trim();
+    if (fieldName.length === 0 || issueIds.length === 0) return;
+    try {
+      let valueName: string | null = null;
+      if (sprintId !== null) {
+        const native = await this.yt.getSprint(team.boardId, sprintId);
+        if (!native) return;
+        valueName = native.name;
+        const { id: projectId } = await this.project();
+        await this.yt.ensureEnumValue(projectId, fieldName, valueName).catch(() => {});
+      }
+      for (const issueId of issueIds) {
+        // Per-issue: one failing write (permissions, required-field clear, missing
+        // bundle value) must not abort the mirror for the remaining issues.
+        await this.yt.setIssueEnumField(issueId, fieldName, valueName).catch(() => {});
+      }
+    } catch {
+      /* best-effort mirror — membership already changed; next move re-syncs */
+    }
   }
 
   /**
@@ -495,7 +534,10 @@ export class ApiClient {
       seed: { focusFactor: factor.value, focusFactorSource: factor.source },
     });
     if (request.moveUnresolvedIssues && previous) {
-      await this.yt.moveUnresolvedIssues(team.boardId, previous.id, created.id);
+      // moveUnresolvedIssues returns the EXACT set it moved — the team's optional
+      // Sprint FIELD follows precisely those issues to the new Sprint's value.
+      const carried = await this.yt.moveUnresolvedIssues(team.boardId, previous.id, created.id);
+      await this.syncSprintField(team, carried, created.id);
     }
     return this.getSprint(created.id, team.id);
   }
@@ -585,12 +627,26 @@ export class ApiClient {
         correlationId: '',
       });
     }
+    const renamed = patch.name !== undefined && patch.name !== current.name;
     const updated = await this.yt.updateSprint(team.boardId, sprintId, patch);
     if (updated.start !== null && updated.finish !== null) {
       await this.app('POST', 'sprint-register', {
         teamId: team.id,
         sprint: { id: sprintId, name: updated.name, start: updated.start, finish: updated.finish },
       });
+    }
+    if (renamed && (team.sprintFieldName ?? '').trim().length > 0) {
+      // A rename must carry the mirror field along for EVERY issue already in the
+      // Sprint — otherwise pre-rename issues keep a value no Sprint owns anymore.
+      const ids = (
+        await this.yt.getSprintIssues(
+          team.boardId,
+          sprintId,
+          team.originalEffortField,
+          team.currentEffortField,
+        )
+      ).map((i) => i.id);
+      await this.syncSprintField(team, ids, sprintId);
     }
     return this.getSprint(sprintId, team.id);
   }

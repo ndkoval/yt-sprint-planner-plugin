@@ -46,6 +46,53 @@ export async function sprintIssues(
   }));
 }
 
+interface RestIssue {
+  idReadable: string;
+  summary?: string;
+  customFields?: Array<{ name: string; value?: { name?: string } | null }>;
+}
+
+function enumValueOf(issue: RestIssue | undefined, fieldName: string): string | null {
+  const field = issue?.customFields?.find((f) => f.name === fieldName);
+  return field?.value?.name ?? null;
+}
+
+/** One issue's single-enum custom field value by readable id (null when empty). */
+export async function issueEnumField(
+  idReadable: string,
+  fieldName: string,
+): Promise<string | null> {
+  const issues = (await call('api/issues', {
+    query: idReadable,
+    fields: 'idReadable,summary,customFields(name,value(name))',
+    $top: '10',
+  })) as RestIssue[];
+  return enumValueOf(
+    Array.isArray(issues) ? issues.find((i) => i.idReadable === idReadable) : undefined,
+    fieldName,
+  );
+}
+
+/**
+ * Same, resolved by EXACT summary within a project (seed issue numbers are not
+ * stable across reseeds — YouTrack keeps counting after deletes).
+ */
+export async function issueEnumFieldBySummary(
+  projectKey: string,
+  summary: string,
+  fieldName: string,
+): Promise<string | null> {
+  const issues = (await call('api/issues', {
+    query: `project: ${projectKey}`,
+    fields: 'idReadable,summary,customFields(name,value(name))',
+    $top: '200',
+  })) as RestIssue[];
+  return enumValueOf(
+    Array.isArray(issues) ? issues.find((i) => i.summary === summary) : undefined,
+    fieldName,
+  );
+}
+
 /** The app backend's config response for a project (admin caller). Config v4: all settings per team. */
 export async function appConfig(projectKey: string): Promise<{
   configured: boolean;

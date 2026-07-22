@@ -17,6 +17,7 @@ follow from that mapping.
 | A Scrum board per team, each with its own sprint cadence | **Team** | Every team owns its whole configuration — board, sprint length, hours/day, naming, backlog query and effort fields — so multi-team projects work the way separate Jira boards per team do. Teams may share a board or run different ones on different cadences. |
 | Capacity-vs-commitment warning | **"What fits" banner** + per-person **Load** bar | Committed Original Effort vs Planned Capacity (Sprint) and vs Available (person). |
 | Complete Sprint → "move to next sprint / backlog" | **Carry over unfinished issues** | On create-next, optionally move unresolved issues into the *same team's* new Sprint (on that team's board). |
+| Jira's issue-level **Sprint field** | **Sprint-field mirroring** (optional, per team) | Teams that also track Sprints in an enum custom field get it synced on every planning move: into the Sprint → field = the Sprint's name; back to the backlog → cleared; carry-over → the new Sprint's name. |
 | Sprint Report (completed vs committed, scope change) | **Completed Original Effort** feeding focus-factor calibration | Observed focus factor = completed ÷ raw; smoothed into the next Sprint's factor. |
 | Assignee | **Assignee-scoped effort** + **Unassigned** bucket | Per-person load is shown, but work can stay unassigned to preserve project-direction ownership. |
 

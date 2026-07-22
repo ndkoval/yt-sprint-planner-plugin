@@ -47,7 +47,7 @@ Runs against a **real YouTrack** with the app installed. Entry point: [`scripts/
 **Seeded fixtures** (deterministic, [`scripts/seed-e2e.mjs`](scripts/seed-e2e.mjs) → `artifacts/e2e-env.json`): two app-configured projects, because per-project independence needs a pair —
 
 - **`SCPE1`** ("Capacity One"): **two fully separated teams** (config v4 — every team owns its board, cadence, naming and backlog) — **Alpha** (admin + alice): its own "Capacity One Alpha Board", 14-day Sprints, 8h days, template `Alpha S{sequence}`, backlog = Normal-priority Open issues; **Beta** (bob at 50%): a *different* board, 7-day Sprints, template `Beta S{sequence}`, backlog = Major-priority Open issues. The multi-team scenarios.
-- **`SCPE2`** ("Capacity Two"): **one team** (admin + bob) — 7-day Sprints, 6h days, its own board/template; the single-team baseline and independence counterpart.
+- **`SCPE2`** ("Capacity Two"): **one team** (admin + bob) — 7-day Sprints, 6h days, its own board/template; the single-team baseline and independence counterpart. Its team also sets `sprintFieldName: 'Sprint'` (an enum custom field), so the **Sprint-field mirroring** spec (`09-sprint-field`) can verify over REST that every planning move — backlog → Unassigned, → person, → backlog, and create-next carry-over — keeps the field in sync.
 
 Seeded boards are created with **project-based sharing** (`ensureBoard` in [`scripts/lib/seed-lib.mjs`](scripts/lib/seed-lib.mjs)) — REST-created boards default to owner-only, which would 403 the member personas' planner reads.
 

@@ -196,6 +196,9 @@ interface FieldOption {
   disabled?: boolean;
 }
 
+/** Sentinel option key for "no sprint mirror field". */
+const NO_SPRINT_FIELD = '__none__';
+
 /** §7 project settings form. Since config v4 EVERY setting belongs to a team. */
 export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.Element {
 
@@ -454,6 +457,17 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
   const fieldOptionsFor = (current: string): FieldOption[] => {
     const opts = sortedFields.map(fieldOption);
     if (current && !opts.some((o) => o.key === current)) opts.unshift({ key: current, label: current });
+    return opts;
+  };
+  // The optional per-team Sprint MIRROR field: SINGLE-value enum fields only (the
+  // sync writes a SingleEnumIssueCustomField — multi-value enums can never sync),
+  // plus a "None" row.
+  const sprintFieldOptionsFor = (current: string | undefined): FieldOption[] => {
+    const opts: FieldOption[] = [
+      { key: NO_SPRINT_FIELD, label: 'None — do not mirror Sprints into a field' },
+      ...sortedFields.filter((f) => f.type === 'enum[1]').map(fieldOption),
+    ];
+    if (current && !opts.some((o) => o.key === current)) opts.push({ key: current, label: current });
     return opts;
   };
 
@@ -740,6 +754,30 @@ export function SettingsForm({ client, onClose }: SettingsFormProps): React.JSX.
           onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
             updateTeam(teamIndex, { backlogQuery: e.target.value })
           }
+        />
+
+        <div style={subTitleStyle}>{scoped('Sprint field')}</div>
+        <p style={{ ...helpTextStyle, marginTop: 0 }}>
+          Optional: teams that also track Sprints in an enum field keep it in sync
+          automatically — pulling an issue into the Sprint (assigned or unassigned) sets
+          the field to the Sprint&rsquo;s name, dropping it back to the backlog clears it,
+          and carry-over rewrites it to the new Sprint.
+        </p>
+        <Select
+          data={sprintFieldOptionsFor(team.sprintFieldName)}
+          selected={
+            sprintFieldOptionsFor(team.sprintFieldName).find(
+              (o) => o.key === (team.sprintFieldName ?? NO_SPRINT_FIELD),
+            ) ?? null
+          }
+          label="No sprint field"
+          onSelect={(item) => {
+            if (item !== null && typeof item.key === 'string') {
+              updateTeam(teamIndex, {
+                sprintFieldName: item.key === NO_SPRINT_FIELD ? undefined : item.key,
+              });
+            }
+          }}
         />
 
         <div style={subTitleStyle}>{scoped('Focus factor')}</div>

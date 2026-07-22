@@ -292,12 +292,58 @@ export class NativeYouTrack {
     );
   }
 
-  async moveUnresolvedIssues(boardId: string, fromSprintId: string, toSprintId: string): Promise<void> {
+  /** Move unresolved issues between sprints; returns the ids it actually moved. */
+  async moveUnresolvedIssues(
+    boardId: string,
+    fromSprintId: string,
+    toSprintId: string,
+  ): Promise<string[]> {
     const issues = await this.getSprintIssues(boardId, fromSprintId, '', '');
+    const moved: string[] = [];
     for (const issue of issues) {
       if (issue.resolved) continue;
       await this.addIssueToSprint(boardId, toSprintId, issue.id);
+      moved.push(issue.id);
     }
+    return moved;
+  }
+
+  /** Set a single-enum custom field by value name; null clears it. */
+  async setIssueEnumField(issueId: string, fieldName: string, valueName: string | null): Promise<void> {
+    await this.post(
+      `issues/${encodeURIComponent(issueId)}`,
+      {
+        customFields: [
+          {
+            name: fieldName,
+            $type: 'SingleEnumIssueCustomField',
+            value: valueName !== null ? { name: valueName } : null,
+          },
+        ],
+      },
+      { fields: 'id' },
+    );
+  }
+
+  /**
+   * Ensure an enum VALUE exists in a project field's bundle (the optional per-team
+   * "sprint field" needs the new Sprint's name as a value before issues can carry
+   * it). Requires bundle-update rights — callers treat failures as non-fatal.
+   */
+  async ensureEnumValue(projectId: string, fieldName: string, valueName: string): Promise<void> {
+    const fields = await this.get(`admin/projects/${encodeURIComponent(projectId)}/customFields`, {
+      fields: 'field(name),bundle(id)',
+      $top: '200',
+    });
+    const match = Array.isArray(fields)
+      ? fields.find((f) => pick(pick(f, 'field'), 'name') === fieldName)
+      : undefined;
+    const bundleId = pick(pick(match, 'bundle'), 'id');
+    if (typeof bundleId !== 'string' || bundleId.length === 0) return;
+    const base = `admin/customFieldSettings/bundles/enum/${encodeURIComponent(bundleId)}/values`;
+    const values = await this.get(base, { fields: 'name', $top: '500' });
+    if (Array.isArray(values) && values.some((v) => pick(v, 'name') === valueName)) return;
+    await this.post(base, { name: valueName }, { fields: 'id' });
   }
 
   /** Assign by login; null unassigns. Runs as the current user (permissions enforced). */

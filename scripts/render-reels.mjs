@@ -233,9 +233,15 @@ runMain('render-reels', async (log) => {
       continue;
     }
 
-    // 3) Mux the voiceover onto the video (re-encode to H.264/AAC .mp4).
+    // 3) Mux the voiceover onto the video (re-encode to H.264/AAC .mp4). Trim the
+    //    tail to at most a few seconds after the LAST word — the recorder keeps
+    //    rolling through test teardown (screenshots, subtitle writes), and a long
+    //    silent static outro reads as a stalled video.
+    const TAIL_HOLD_S = 4;
     const out = path.join(OUT_DIR, `${reel.vtt}.mp4`);
-    const dur = ffprobeDurationSec(video);
+    const fullDur = ffprobeDurationSec(video);
+    const lastVoiceEndS = Math.max(...inputs.map((inp) => (inp.atMs + inp.durMs) / 1000));
+    const dur = Math.min(fullDur > 0 ? fullDur : 60, lastVoiceEndS + TAIL_HOLD_S);
     const mux = spawnSync(
       'ffmpeg',
       [

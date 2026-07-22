@@ -229,6 +229,44 @@ export async function attachField(c, projectId, fieldId) {
   await c.rest('POST', `/api/admin/projects/${projectId}/customFields`, { field: { id: fieldId }, $type: 'PeriodProjectCustomField', canBeEmpty: true, emptyFieldText: '—' }, { fields: 'id' });
 }
 
+/**
+ * Ensure a single-enum custom field exists, is attached to the project, and its
+ * bundle contains the given values (for teams mirroring Sprints into a field).
+ * Values accumulate in one shared bundle per field name — fine for seeds.
+ */
+export async function ensureEnumField(c, projectId, name, values = []) {
+  const fields = await c.rest('GET', '/api/admin/customFieldSettings/customFields', undefined, { fields: 'id,name', $top: '300' });
+  let fieldId = Array.isArray(fields) ? fields.find((f) => f.name === name)?.id : null;
+  if (!fieldId) {
+    const created = await c.rest('POST', '/api/admin/customFieldSettings/customFields', { name, fieldType: { id: 'enum[1]', $type: 'FieldType' }, $type: 'CustomField' }, { fields: 'id' });
+    fieldId = created.id;
+  }
+  // Attach with a bundle (create one per field name when first attached anywhere).
+  const attached = await c.rest('GET', `/api/admin/projects/${projectId}/customFields`, undefined, { fields: 'field(id,name),bundle(id)', $top: '100' });
+  let bundleId = Array.isArray(attached) ? attached.find((f) => f.field?.id === fieldId)?.bundle?.id : null;
+  if (!bundleId) {
+    const bundles = await c.rest('GET', '/api/admin/customFieldSettings/bundles/enum', undefined, { fields: 'id,name', $top: '300' }).catch(() => []);
+    bundleId = Array.isArray(bundles) ? bundles.find((b) => b.name === `${name} values`)?.id : null;
+    if (!bundleId) {
+      const bundle = await c.rest('POST', '/api/admin/customFieldSettings/bundles/enum', { name: `${name} values`, $type: 'EnumBundle' }, { fields: 'id' });
+      bundleId = bundle.id;
+    }
+    await c.rest('POST', `/api/admin/projects/${projectId}/customFields`, {
+      field: { id: fieldId },
+      bundle: { id: bundleId, $type: 'EnumBundle' },
+      $type: 'EnumProjectCustomField',
+      canBeEmpty: true,
+      emptyFieldText: 'No sprint',
+    }, { fields: 'id' });
+  }
+  const existing = await c.rest('GET', `/api/admin/customFieldSettings/bundles/enum/${bundleId}/values`, undefined, { fields: 'id,name', $top: '500' }).catch(() => []);
+  for (const v of values) {
+    if (Array.isArray(existing) && existing.some((e) => e.name === v)) continue;
+    await c.rest('POST', `/api/admin/customFieldSettings/bundles/enum/${bundleId}/values`, { name: v }, { fields: 'id' }).catch(() => {});
+  }
+  return { fieldId, bundleId };
+}
+
 export async function findStateFieldId(c, projectId) {
   const fields = await c.rest('GET', `/api/admin/projects/${projectId}/customFields`, undefined, { fields: 'field(id,name)', $top: '100' });
   return fields.find((f) => f.field?.name === 'State')?.field?.id ?? null;
@@ -321,9 +359,11 @@ export async function createManagedSprint(c, projectKey, boardId, name, lengthDa
 /**
  * Seed issues into a sprint (via the board command) with effort/state/assignee.
  * spec: {s, state, orig, cur, who|null}. Falls back to admin when the requested
- * assignee is not an assignable project member.
+ * assignee is not an assignable project member. `enumFields` ([{name, value}])
+ * are set via REST on every created issue — used to pre-fill a team's Sprint
+ * MIRROR field to the seeded sprint's name, as if planned through the app.
  */
-export async function seedSprintIssues(c, projectId, boardName, sprintName, specs) {
+export async function seedSprintIssues(c, projectId, boardName, sprintName, specs, enumFields = []) {
   for (const sp of specs) {
     const id = await createIssue(c, projectId, sp.s);
     await command(c, `Board ${boardName} ${sprintName}`, [id]).catch(() => {});
@@ -332,6 +372,11 @@ export async function seedSprintIssues(c, projectId, boardName, sprintName, spec
     if (sp.who) {
       const ok = await command(c, `Assignee ${sp.who}`, [id]).then(() => true).catch(() => false);
       if (!ok) await command(c, 'Assignee admin', [id]).catch(() => {});
+    }
+    for (const ef of enumFields) {
+      await c.rest('POST', `/api/issues/${id}`, {
+        customFields: [{ name: ef.name, $type: 'SingleEnumIssueCustomField', value: { name: ef.value } }],
+      }, { fields: 'id' }).catch(() => {});
     }
   }
 }
@@ -390,6 +435,17 @@ export async function seedProject(c, spec, log = () => {}) {
   }).catch(() => {});
 
   const config = spec.config({ projectId, boardIds });
+
+  // Teams mirroring Sprints into an enum field need the field attached and the
+  // seeded sprint's name present as a bundle value.
+  for (const teamCfg of config.teams) {
+    const fieldName = (teamCfg.sprintFieldName ?? '').trim();
+    if (!fieldName) continue;
+    const teamSpec = spec.teams.find((t) => t.id === teamCfg.id);
+    await ensureEnumField(c, projectId, fieldName, teamSpec?.sprintName ? [teamSpec.sprintName] : []);
+    log(`${spec.key}/${teamCfg.id}: enum sprint field "${fieldName}" ready`);
+  }
+
   await putAppConfig(c, spec.key, config);
   log(`${spec.key}: app config saved (${config.teams.length} team(s))`);
 
@@ -402,7 +458,11 @@ export async function seedProject(c, spec, log = () => {}) {
       team.startOffsetDays ?? 0, team.id,
     );
     log(`${spec.key}/${team.id}: managed sprint ${sprint.id} ${sprint.name} ${sprint.start} -> ${sprint.finish}`);
-    await seedSprintIssues(c, projectId, team.boardName, team.sprintName, team.sprintIssues ?? []);
+    const mirrorField = (teamCfg?.sprintFieldName ?? '').trim();
+    await seedSprintIssues(
+      c, projectId, team.boardName, team.sprintName, team.sprintIssues ?? [],
+      mirrorField ? [{ name: mirrorField, value: team.sprintName }] : [],
+    );
     teams.push({
       teamId: team.id,
       name: teamCfg?.name ?? team.id,

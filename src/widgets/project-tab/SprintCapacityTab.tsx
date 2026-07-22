@@ -559,6 +559,17 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
   const planIssue = useCallback(
     (issueId: string, target: { inSprint: boolean; assigneeId: string | null }): void => {
       if (sprint === null) return;
+      // GUARD, don't retarget: right after switching the sprint or team the board
+      // still renders the previous context for a moment. A drop in that window
+      // must be IGNORED — acting on the selection would plan a stale-rendered card
+      // into a sprint the user never saw; acting on the view would undo the switch.
+      if (selectedIdRef.current !== null && sprint.id !== selectedIdRef.current) return;
+      if (
+        selectedTeamIdRef.current !== null &&
+        sprint.team.teamId !== selectedTeamIdRef.current
+      ) {
+        return;
+      }
       const sprintId = sprint.id;
       const teamId = selectedTeam?.id;
       setAssigningIssueIds((prev) => new Set(prev).add(issueId));

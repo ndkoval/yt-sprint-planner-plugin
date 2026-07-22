@@ -179,6 +179,9 @@ async function runMain() {
           nameTemplate: 'Orbit {year}-S{sequence}',
           backlogQuery: 'project: ORB State: Open',
           learningRate: 0.3,
+          // Orbit ALSO tracks Sprints in an enum field — the demo shows planning
+          // moves keeping it in sync automatically.
+          sprintFieldName: 'Sprint',
         },
       ],
     }),

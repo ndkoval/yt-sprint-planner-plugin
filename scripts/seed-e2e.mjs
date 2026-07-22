@@ -146,6 +146,9 @@ async function runMain() {
           nameTemplate: 'Two S{sequence}',
           backlogQuery: 'project: SCPE2 State: Open',
           learningRate: 0.2,
+          // SCPE2 also tracks Sprints in an enum FIELD — planning moves must keep
+          // it in sync (covered by the 09-sprint-field spec).
+          sprintFieldName: 'Sprint',
         },
       ],
     }),

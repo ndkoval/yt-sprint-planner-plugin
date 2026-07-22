@@ -92,6 +92,9 @@ export const teamSchema = z
     learningRate: z.number().gt(0).lte(1),
     // Per-team reminder override; 0 disables reminders for this team.
     reminderLeadDays: z.number().int().min(0).max(30).optional(),
+    // Optional enum field mirroring Sprint membership (kept in sync on every
+    // planning move); absent/empty = off.
+    sprintFieldName: z.string().optional(),
   })
   .strict();
 

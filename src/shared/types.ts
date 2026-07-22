@@ -144,6 +144,14 @@ export interface Team {
    * 0 disables reminders for this team. Absent means "use the app default".
    */
   reminderLeadDays?: number | undefined;
+  /**
+   * Optional name of a single-enum custom field mirroring Sprint membership (teams
+   * that also track Sprints in a field, e.g. for queries/reports). When set, every
+   * planning move keeps it in sync: pulling an issue into the Sprint (assigned or
+   * not) sets the field to the Sprint's name, dropping it back to the backlog
+   * clears it, and carry-over rewrites it to the new Sprint. Absent/empty = off.
+   */
+  sprintFieldName?: string | undefined;
 }
 
 /**

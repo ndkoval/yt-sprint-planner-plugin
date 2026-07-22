@@ -10,6 +10,7 @@ import {
   Captioner,
   closeTitleCard,
   primeTitleCard,
+  dragCard,
   humanClick,
   humanFill,
   moveTo,
@@ -62,6 +63,31 @@ test.describe('Multiple projects', () => {
     await cap.say('Its own board, its own sprint names, its own team — nothing is shared.');
     await moveTo(page, orb.getByText('Raw capacity').first());
     await settle(page, 900);
+
+    // NEW: Orbit ALSO tracks Sprints in an enum FIELD — plan work and watch the
+    // field follow the move automatically.
+    await cap.say('One more thing: Orbit also tracks Sprints in a field. Pull work in — backlog onto Unassigned…');
+    await dragCard(
+      page,
+      orb,
+      orb.locator('[title*="Webhook API"]').first(),
+      orb.getByLabel(/^Lane Unassigned/).first(),
+    );
+    await expect(orb.getByLabel(/^Lane Unassigned/).locator('[title*="Webhook API"]')).toBeVisible();
+    await settle(page, 700);
+    const fieldCard = orb.locator('[data-test="scp-card"]', { hasText: 'Webhook API' }).first();
+    await moveTo(page, fieldCard);
+    await fieldCard.dblclick();
+    const overlay = orb.locator('[data-test="scp-issue-overlay"]');
+    await expect(overlay).toBeVisible();
+    const sprintField = overlay.locator('[data-field="Sprint"]');
+    await expect(sprintField).toContainText(/Orbit \d{4}-S1/, { timeout: 20_000 });
+    await moveTo(page, sprintField);
+    await cap.say('…and the Sprint field is set for you — every planning move keeps it in sync automatically.');
+    await settle(page, 1100);
+    await overlay.locator('[data-test="scp-issue-overlay-close"]').click();
+    await expect(overlay).toBeHidden();
+    await settle(page, 500);
 
     // 3. Orbit's settings: every knob belongs to the team — and prove the isolation
     // with a REAL edit: bump Erin's allocation, save, then show AppGlass untouched.
