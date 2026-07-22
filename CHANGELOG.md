@@ -2,7 +2,9 @@
 
 All notable changes to the Sprint Capacity Planner are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.1] — 2026-07-22
+
+Verified on the newest YouTrack; platform-compat and polish.
 
 ### Added
 
@@ -23,6 +25,17 @@ All notable changes to the Sprint Capacity Planner are documented here. The form
   **Sprint Capacity Planner** menu item (through 2025.x the settings tab also
   rendered read-only for members). The permissions spec pins whichever behavior
   the tested instance has; server-side authorization is unchanged.
+- **Create-next-Sprint dialog** no longer renders Ring's detached outside-✕ close
+  button (it floated over the dimmed backdrop far from the dialog and read as an
+  orphaned control); Cancel and Escape close as before.
+
+### Fixed
+
+- **The issue editor survives narrow widgets.** With the widget squeezed below
+  ~760px (e.g. the host showing a side panel), the overlay's fixed 240px field
+  column starved the content column into overlapping sliver text; the layout now
+  stacks into a single column.
+- The backlog search box no longer paints a native clear-✕ above dialog scrims.
 
 ## [0.4.0] — 2026-07-22
 
