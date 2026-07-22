@@ -33,10 +33,11 @@ All settings belong to a team — teams are now fully separated.
 - **Sprint-field mirroring** (`Team.sprintFieldName`, optional). Teams that also
   track Sprints in a single-enum custom field keep it in sync automatically:
   pulling an issue into the Sprint — onto a person or onto Unassigned — sets the
-  field to the Sprint's name (the value is added to the field's bundle first),
-  dragging it back to the backlog clears it, and create-next's carry-over rewrites
-  it to the new Sprint, and renaming a Sprint in the app's details editor
-  re-stamps every issue already in it. The sync is a best-effort native write in
+  field to the Sprint's name (the value is added to the field's bundle first);
+  dragging it back to the backlog clears it (only when the move actually removed
+  the issue from this Sprint); create-next's carry-over rewrites it to the new
+  Sprint; and renaming a Sprint in the app's details editor re-stamps every issue
+  already in it. The sync is a best-effort native write in
   the current user's session and never blocks the planning move; the mirror is
   single-valued (an issue on several Sprints keeps the value of the last planning
   move) and the field should allow an empty value. Configured per team in the
