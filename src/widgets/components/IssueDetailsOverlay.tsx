@@ -163,6 +163,16 @@ export function IssueDetailsOverlay({
   const [activities, setActivities] = useState<YtActivity[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Narrow-widget detection (the host can squeeze the iframe, e.g. with a side
+  // panel open): below this width the two-column field layout must stack.
+  const [narrow, setNarrow] = useState(
+    typeof window !== 'undefined' && window.innerWidth < 760,
+  );
+  useEffect(() => {
+    const onResize = (): void => setNarrow(window.innerWidth < 760);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const [title, setTitle] = useState(issue.summary);
   const [desc, setDesc] = useState('');
   const [comment, setComment] = useState('');
@@ -274,10 +284,14 @@ export function IssueDetailsOverlay({
     boxShadow: '0 12px 40px rgba(0, 0, 0, 0.3)',
     padding: `calc(${U} * 3)`,
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) 240px',
-    gridTemplateRows: 'auto max-content',
+    // Responsive: in a NARROW widget (e.g. the host shows a side panel and squeezes
+    // the iframe) the fixed 240px field column starved the content column into a
+    // one-character-per-line sliver with overlapping text — stack instead.
+    gridTemplateColumns: narrow ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) 240px',
+    gridTemplateRows: narrow ? 'auto' : 'auto max-content',
     alignContent: 'start',
     columnGap: `calc(${U} * 3)`,
+    rowGap: narrow ? `calc(${U} * 2)` : 0,
     maxHeight: 760,
     overflowY: 'auto',
   };

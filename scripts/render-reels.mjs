@@ -237,7 +237,8 @@ runMain('render-reels', async (log) => {
     //    tail to at most a few seconds after the LAST word — the recorder keeps
     //    rolling through test teardown (screenshots, subtitle writes), and a long
     //    silent static outro reads as a stalled video.
-    const TAIL_HOLD_S = 4;
+    const TAIL_HOLD_S = 2.5;
+    const FADE_S = 0.7;
     const out = path.join(OUT_DIR, `${reel.vtt}.mp4`);
     const fullDur = ffprobeDurationSec(video);
     const lastVoiceEndS = Math.max(...inputs.map((inp) => (inp.atMs + inp.durMs) / 1000));
@@ -252,8 +253,12 @@ runMain('render-reels', async (log) => {
         '-map', '1:a:0',
         '-c:v', 'libx264',
         '-pix_fmt', 'yuv420p',
-        // Normalise the narration to a consistent, clearly-audible loudness.
-        '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
+        // Fade the picture out at the very end (a hard cut on a static frame read
+        // as dead air in review) …
+        '-vf', `fade=t=out:st=${Math.max(0, dur - FADE_S).toFixed(2)}:d=${FADE_S}`,
+        // … normalise the narration and PAD the audio to the video's length so the
+        // stream doesn't end 4s early (players show it as a stalled track).
+        '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11,apad',
         '-c:a', 'aac',
         '-b:a', '160k',
         '-t', String(dur > 0 ? dur : 60),

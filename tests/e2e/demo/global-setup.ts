@@ -69,6 +69,28 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
     await (await page.$('button[type=submit]'))!.click();
     await page.waitForTimeout(4500);
   }
+  // Dismiss the platform's first-run onboarding OFF-CAMERA (2026.x shows a
+  // "Welcome! Let's get started" tour panel with a JetBrains AI promo on project
+  // pages) so it never appears in a reel. Both dismissals persist in the profile.
+  try {
+    await page.goto(`${BASE}/projects/AGP`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(2500);
+    const skip = page.getByRole('button', { name: /Skip the tour/i });
+    if (await skip.isVisible().catch(() => false)) {
+      await skip.click();
+      await page.waitForTimeout(800);
+    }
+    const aiClose = page
+      .locator('div', { hasText: 'JetBrains AI' })
+      .getByRole('button', { name: /close|dismiss/i })
+      .first();
+    if (await aiClose.isVisible().catch(() => false)) await aiClose.click().catch(() => {});
+    await page.waitForTimeout(500);
+    console.warn('[demo-setup] onboarding tour dismissed');
+  } catch (e) {
+    console.warn('[demo-setup] tour dismissal skipped:', e instanceof Error ? e.message.slice(0, 100) : String(e));
+  }
+
   await page.context().storageState({ path: STORAGE_STATE });
 
   // Pre-authorize the app's DELETE requests so the consent prompt YouTrack shows the

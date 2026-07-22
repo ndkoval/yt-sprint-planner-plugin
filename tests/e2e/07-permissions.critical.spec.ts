@@ -42,13 +42,28 @@ test.describe('permissions', () => {
     await expect(card).toHaveAttribute('draggable', 'false');
   });
 
-  test('a member can also use the project-settings tab, read-only', async ({ alicePage }) => {
-    // Both entry points work for members: the settings tab renders the same planner
-    // (without manager controls) once the board is project-visible.
+  test('member access to the project-settings tab follows the platform version', async ({
+    alicePage,
+  }) => {
+    // PLATFORM behavior change: through 2025.x members could open the project
+    // settings page (the widget rendered read-only, no manager controls); since
+    // 2026.1 YouTrack serves project settings to project admins ONLY — members get
+    // an access-denied page and reach the planner via the global menu item instead
+    // (covered by the member tests above). Pin whichever behavior this instance has.
+    const cfg = await alicePage.request.get('/api/config?fields=version');
+    const { version } = (await cfg.json()) as { version: string };
+    const major = Number(version.split('.')[0] ?? 0);
+
     await alicePage.goto(plannerUrl(PROJECTS.one.key), { waitUntil: 'domcontentloaded' });
-    const frame = await plannerFrame(alicePage);
-    await frame.locator('[data-test="scp-ready"]').waitFor({ state: 'visible', timeout: 30_000 });
-    await expect(frame.getByRole('button', { name: 'Settings', exact: true })).toHaveCount(0);
+    if (major >= 2026) {
+      await alicePage.waitForTimeout(4000);
+      const body = (await alicePage.textContent('body')) ?? '';
+      expect(body).toMatch(/not allowed to access|sufficient permissions/i);
+    } else {
+      const frame = await plannerFrame(alicePage);
+      await frame.locator('[data-test="scp-ready"]').waitFor({ state: 'visible', timeout: 30_000 });
+      await expect(frame.getByRole('button', { name: 'Settings', exact: true })).toHaveCount(0);
+    }
   });
 
   test('a user with no project role sees no projects anywhere', async ({ evePage }) => {

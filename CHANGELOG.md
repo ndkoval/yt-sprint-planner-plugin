@@ -2,6 +2,28 @@
 
 All notable changes to the Sprint Capacity Planner are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Verified on YouTrack 2026.2** (previously 2025.3). A new platform E2E spec pins
+  the exact version each run verified (and checks it satisfies the manifest's
+  `minYouTrackVersion`); the CI/dev provisioning default image is now
+  `jetbrains/youtrack:2026.2.17765` (native arm64 — no Rosetta needed).
+- **Seeding works across platform generations.** YouTrack 2026.1 removed the Hub
+  `projectteams` endpoints and stopped projecting projects into Hub: team members
+  are now added through the native `POST /api/admin/projects/{id}/team/ownUsers`,
+  and project roles through the new `POST /api/assignedRoles` (ProjectScope) —
+  both with automatic Hub fallbacks for ≤2025.x servers.
+
+### Changed
+
+- **Member entry point on 2026.1+.** YouTrack now serves project-settings pages to
+  project admins only, so team members reach the planner via the global
+  **Sprint Capacity Planner** menu item (through 2025.x the settings tab also
+  rendered read-only for members). The permissions spec pins whichever behavior
+  the tested instance has; server-side authorization is unchanged.
+
 ## [0.4.0] — 2026-07-22
 
 All settings belong to a team — teams are now fully separated.

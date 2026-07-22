@@ -18,7 +18,9 @@ import path from 'node:path';
 import { runMain } from './lib/log.mjs';
 import { ARTIFACTS_DIR } from './lib/paths.mjs';
 
-const IMAGE = process.env.YT_IMAGE ?? 'jetbrains/youtrack:2025.3.148033';
+// Default: the newest YouTrack release the suite is verified against (bump
+// deliberately — the 00-platform spec pins the version the run actually saw).
+const IMAGE = process.env.YT_IMAGE ?? 'jetbrains/youtrack:2026.2.17765';
 const CONTAINER = process.env.YT_CONTAINER ?? 'youtrack-ci';
 const PORT = Number(process.env.YT_TEST_PORT ?? 8080);
 const BASE_URL = process.env.YT_TEST_BASE_URL ?? `http://localhost:${PORT}`;

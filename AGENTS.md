@@ -57,6 +57,12 @@ npm run demo:publish        # copy the latest reels into docs/media/ (what the R
 - **The Kanban board in demos must be the standard YouTrack board.** Do NOT develop a
   custom board.
 - **Hosting real YouTrack (platform-dependent):**
+  - **Current dev/CI default: `jetbrains/youtrack:2026.2.17765`** (native arm64 image —
+    boots directly on Apple Silicon; `scripts/ci-youtrack-docker.mjs` runs the whole
+    first-run wizard headlessly and mints the admin tokens). Note 2026.1+ platform
+    changes: Hub no longer exposes project teams/projects (seeding uses the native
+    YouTrack REST endpoints with Hub fallbacks), and project-settings pages are
+    admin-only (members use the global menu item).
   - The app's **project widgets** (project tab + settings) require YouTrack **2024.3+**
     (`PROJECT_TAB` / `PROJECT_SETTINGS` extension points). On Apple-Silicon the 2024.3+
     standalone build can't boot (GraalVM/Truffle 22), so run it in **Docker** forced to

@@ -104,6 +104,55 @@ export async function openProjectApp(
   return appFrame(page);
 }
 
+/**
+ * Cover an in-reel navigation with a branded veil so the platform's white loading
+ * flash never reaches the recording: paint a full-screen gradient (waiting for the
+ * PAINT via double-rAF), run `navigate`, wait for `readySelector` in any frame (or
+ * a timeout), then remove the veil — it re-paints itself across the navigation via
+ * a MutationObserver-free rAF loop on the new document (injected inline).
+ */
+export async function veiledNavigation(
+  page: Page,
+  navigate: () => Promise<unknown>,
+  settleMs = 2500,
+): Promise<void> {
+  // Arm the flag + paint the veil in the OLD document, and wait for the actual
+  // paint (double rAF). The cursor init script re-creates the veil in the NEW
+  // document at document-start (sessionStorage survives same-origin navigations),
+  // so the cover is continuous across the swap.
+  await page
+    .evaluate(async () => {
+      sessionStorage.setItem('__demo-veil', '1');
+      if (!document.getElementById('__demo-veil')) {
+        const el = document.createElement('div');
+        el.id = '__demo-veil';
+        el.style.cssText =
+          'position:fixed;inset:0;z-index:2147483647;background:linear-gradient(135deg,#1a73e8,#0b3d91);pointer-events:none;';
+        (document.body || document.documentElement).appendChild(el);
+        document.documentElement.style.overflow = 'hidden';
+      }
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))));
+    })
+    .catch(() => {});
+  await navigate();
+  await page.waitForTimeout(settleMs);
+  await page
+    .evaluate(() => {
+      sessionStorage.removeItem('__demo-veil');
+      const el = document.getElementById('__demo-veil');
+      if (el) {
+        el.style.transition = 'opacity 0.3s ease';
+        el.style.opacity = '0';
+        setTimeout(() => {
+          el.remove();
+          document.documentElement.style.overflow = '';
+        }, 350);
+      }
+    })
+    .catch(() => {});
+  await page.waitForTimeout(500);
+}
+
 /** Open the native YouTrack agile board (optionally a specific sprint). */
 export async function openBoard(page: Page, agileId: string, sprintId?: string): Promise<void> {
   const url = sprintId ? `/agiles/${agileId}/${sprintId}` : `/agiles/${agileId}`;

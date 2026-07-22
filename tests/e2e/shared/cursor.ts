@@ -18,6 +18,53 @@ export const CURSOR_INIT_SCRIPT = `
   // the branded card, not the app's loading spinner. Runs as early as possible and again
   // on DOMContentLoaded (idempotent) because at document-start <body> / the final URL may
   // not be ready yet. __closeTitleCard fades it out to reveal the app behind it.
+  // Hide the platform's docked onboarding/AI-promo panel (2026.x shows it on
+  // project pages) on EVERY recorded page — it burns an ad into the reels and
+  // squeezes the app into a narrow column.
+  const hideOnboarding = () => {
+    try {
+      if (document.getElementById('__demo-hide-onboarding')) return;
+      const style = document.createElement('style');
+      style.id = '__demo-hide-onboarding';
+      style.textContent = '[data-test~="onboarding-tour-panel"]{display:none !important;}';
+      (document.head || document.documentElement).appendChild(style);
+    } catch (_e) { /* ignore */ }
+  };
+  hideOnboarding();
+  document.addEventListener('DOMContentLoaded', hideOnboarding);
+
+  // Navigation veil: a branded cover that SURVIVES document swaps. The old
+  // document's DOM dies with the navigation, so the veil is re-created in the NEW
+  // document at document-start whenever the sessionStorage flag (same-origin,
+  // navigation-proof) is set — an rAF loop retries until <body> exists, so not a
+  // single white loading frame reaches the recording.
+  const ensureVeil = () => {
+    try {
+      if (sessionStorage.getItem('__demo-veil') !== '1') return;
+      if (document.getElementById('__demo-veil')) return;
+      const host = document.body || document.documentElement;
+      if (!host) return;
+      const el = document.createElement('div');
+      el.id = '__demo-veil';
+      el.style.cssText =
+        'position:fixed;inset:0;z-index:2147483647;background:linear-gradient(135deg,#1a73e8,#0b3d91);pointer-events:none;';
+      host.appendChild(el);
+      document.documentElement.style.overflow = 'hidden';
+    } catch (_e) { /* ignore */ }
+  };
+  const veilLoop = () => {
+    try {
+      if (sessionStorage.getItem('__demo-veil') !== '1') return;
+      if (!document.getElementById('__demo-veil')) {
+        ensureVeil();
+        requestAnimationFrame(veilLoop);
+      }
+    } catch (_e) { /* ignore */ }
+  };
+  ensureVeil();
+  requestAnimationFrame(veilLoop);
+  document.addEventListener('DOMContentLoaded', ensureVeil);
+
   const ensureTitleCard = () => {
     try {
       if (document.getElementById('__demo-titlecard')) return;
@@ -64,6 +111,18 @@ export const CURSOR_INIT_SCRIPT = `
   ensureTitleCard();
   document.addEventListener('DOMContentLoaded', ensureTitleCard);
   document.addEventListener('readystatechange', ensureTitleCard);
+  // rAF retry loop: at document-start <body> may not exist yet, and waiting for
+  // DOMContentLoaded let the platform's white loading screen flash for ~0.2s at
+  // the start of every reel. Retry every frame until the card is mounted.
+  const cardLoop = () => {
+    try {
+      if (new URLSearchParams(location.search).get('reelIntro') !== '1') return;
+      if (document.getElementById('__demo-titlecard')) return;
+      ensureTitleCard();
+      if (!document.getElementById('__demo-titlecard')) requestAnimationFrame(cardLoop);
+    } catch (_e) { /* ignore */ }
+  };
+  requestAnimationFrame(cardLoop);
 
   const ensure = () => {
     if (document.getElementById('__demo-cursor')) return;

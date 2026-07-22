@@ -52,7 +52,9 @@ export function CreateNextSprintDialog({
       label="Create next Sprint"
       trapFocus
       autoFocusFirst
-      showCloseButton
+      // No outside ✕: Ring renders it detached at the scrim's top-right, where it
+      // reads as an orphaned control (flagged twice in demo review). Cancel +
+      // Escape (onCloseAttempt) cover closing.
       onCloseAttempt={() => {
         if (!creating) onCancel();
       }}

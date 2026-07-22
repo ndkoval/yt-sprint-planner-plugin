@@ -35,7 +35,9 @@ const TARGET_LUFS = -16; // loudnorm integrated target used by the renderer
 const MIN_MEAN_DB = -24; // quieter than this ⇒ too soft
 const MAX_MEAN_DB = -12; // louder than this ⇒ too hot
 const LEAD_SILENCE_WARN_S = 1.2; // dead air before the first word
-const TRAIL_SILENCE_WARN_S = 2.5;
+// The render pipeline deliberately holds ~2.5s after the last word and fades out
+// (audio padded to video length) — warn only beyond that designed tail.
+const TRAIL_SILENCE_WARN_S = 3.0;
 const WPS_RUSHED = 3.3; // words/sec above this reads as "rushed, no pauses"
 const CUE_MIN_GAP_S = 0.35; // desired breathing room between spoken lines
 const INTRO_WHITE_LUMA = 235; // first frame brighter than this ⇒ likely loading/white, not a title card

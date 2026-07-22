@@ -436,6 +436,9 @@ export function SprintPlanningBoard({
                 border: '1px solid var(--ring-line-color)',
                 borderRadius: 'var(--ring-border-radius)',
                 font: 'var(--ring-font-smaller)',
+                // No native webkit clear-✕: it painted above dialog scrims.
+                WebkitAppearance: 'none',
+                appearance: 'none',
               }}
             />
             <div style={{ maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>

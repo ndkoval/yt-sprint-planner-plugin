@@ -79,7 +79,7 @@ export function estNarrationMs(text: string): number {
 export async function primeTitleCard(page: Page, title: string, subtitle: string): Promise<void> {
   const created = await page
     .evaluate(
-      ([t, s]) => {
+      async ([t, s]) => {
         if (document.getElementById('__demo-titlecard')) return false;
         const el = document.createElement('div');
         el.id = '__demo-titlecard';
@@ -98,15 +98,17 @@ export async function primeTitleCard(page: Page, title: string, subtitle: string
         (document.body || document.documentElement).appendChild(el);
         // Cover the scrollbar strip too (a fixed overlay leaves it exposed).
         document.documentElement.style.overflow = 'hidden';
+        // Deterministically wait for the card to actually PAINT (double rAF) — a
+        // fixed timer raced the recorder and produced white first frames.
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))));
         return true;
       },
       [title, subtitle] as const,
     )
     .catch(() => false);
-  // Hold briefly so the recorder's FIRST captured frame is the painted card, not the
-  // white pre-paint page (the QA gate samples frame 0 for the title card). Only on
-  // first paint — re-priming (e.g. spec + openProjectApp) must not add lead silence.
-  if (created === true) await page.waitForTimeout(400);
+  // Short extra hold so the recorder captures at least a few card-only frames.
+  // Only on first paint — re-priming must not add lead silence.
+  if (created === true) await page.waitForTimeout(250);
 }
 
 /** Fade out the reel's title card to reveal the app behind it. No-op off a reel. */

@@ -47,6 +47,20 @@ async function runMain() {
     viewport: { width: 960, height: 800 },
     deviceScaleFactor: 2,
   });
+  // Hide the 2026.x onboarding/AI-promo side panel — never part of the product story.
+  /* eslint-disable no-undef -- runs in the BROWSER context via addInitScript */
+  await page.addInitScript(() => {
+    const hide = () => {
+      if (document.getElementById('__shot-hide-onboarding')) return;
+      const style = document.createElement('style');
+      style.id = '__shot-hide-onboarding';
+      style.textContent = '[data-test~="onboarding-tour-panel"]{display:none !important;}';
+      (document.head || document.documentElement).appendChild(style);
+    };
+    hide();
+    document.addEventListener('DOMContentLoaded', hide);
+  });
+  /* eslint-enable no-undef */
 
   // Login.
   await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });

@@ -33,6 +33,8 @@ Manager = project leader or `UPDATE_PROJECT` holder (above), resolved per reques
 
 A member's capacity write targets are further constrained by the data: rows exist only for a team's **enabled participants**, and a first-edit row is seeded only when the target is an enabled member of the addressed team — non-members get `NOT_FOUND`, not a row.
 
+**Platform note (member entry points):** through YouTrack **2025.x** the project-settings page also rendered for team members (the widget showed the planner read-only); since **2026.1** YouTrack serves project-settings pages to project admins only, so members use the global **Sprint Capacity Planner** menu item (`MAIN_MENU_ITEM` — same widget, an in-widget project picker). Server-side authorization is identical on either path.
+
 ## Transport envelope & error codes
 
 Every backend response travels in an HTTP-**200** envelope `{ok: true, data} | {ok: false, error}` ([`BackendEnvelope`](src/shared/api.ts)) because the host's `fetchApp` transport does not surface HTTP error bodies reliably (verified on YouTrack 2025.3). A failed request carries a structured `ApiError`:

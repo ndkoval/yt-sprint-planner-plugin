@@ -141,11 +141,40 @@ export async function renameUser(c, ringId, name) {
 }
 
 /**
- * Add users (by login) to a project's TEAM via Hub REST, so they become assignable
- * project members with the Contributor role. (The YouTrack REST API doesn't expose
- * team membership, but Hub's projectteams resource does — verified on 2025.3.)
+ * Add users (by login) to a project's TEAM so they become assignable project
+ * members. Since YouTrack 2026.1 team membership is a first-class YouTrack REST
+ * resource (`/api/admin/projects/{id}/team/ownUsers`); the Hub `projectteams`
+ * endpoints were REMOVED. Older servers (≤2025.x) still need the Hub path, so the
+ * native route is tried first and Hub is the fallback.
  */
-export async function addProjectTeamMembers(c, projectName, logins) {
+export async function addProjectTeamMembers(c, projectName, logins, projectId = null) {
+  // Resolve the YouTrack project id when the caller only has the name.
+  if (!projectId) {
+    const projects = await c.rest('GET', '/api/admin/projects', undefined, { fields: 'id,name', $top: '200' });
+    projectId = Array.isArray(projects) ? projects.find((p) => p.name === projectName)?.id : null;
+  }
+  if (projectId) {
+    const added = [];
+    let nativeWorks = true;
+    for (const login of logins) {
+      const users = await c.rest('GET', '/api/users', undefined, { fields: 'id,login', query: login });
+      const user = Array.isArray(users) ? users.find((u) => u.login === login) : null;
+      if (!user) continue;
+      const ok = await c
+        .rest('POST', `/api/admin/projects/${projectId}/team/ownUsers`, { id: user.id }, { fields: 'login' })
+        .then(() => true)
+        .catch((e) => {
+          // 404/405 = pre-2026.1 server without the resource → fall back to Hub.
+          if (/40[45]/.test(String(e?.message ?? e))) nativeWorks = false;
+          return false;
+        });
+      if (!nativeWorks) break;
+      if (ok) added.push(login);
+    }
+    if (nativeWorks) return added;
+  }
+
+  // Hub fallback (verified on 2025.3; the resource is gone on 2026.1+).
   const page = await c.rest(
     'GET',
     '/hub/api/rest/projects',
@@ -181,6 +210,51 @@ export async function addProjectTeamMembers(c, projectName, logins) {
  * non-leader becomes a planning manager. Idempotent (duplicate grants 409 → ignored).
  */
 export async function grantProjectRole(c, login, projectName, roleKey = 'project-admin') {
+  // Since YouTrack 2026.x role grants are a native YouTrack REST resource
+  // (`POST /api/assignedRoles` with a ProjectScope — captured from the 2026.2 UI);
+  // Hub no longer projects YouTrack projects at all. Try native first, fall back
+  // to the Hub projectroles path for ≤2025.x servers.
+  const roleName = { 'project-admin': 'Project Admin', contributor: 'Contributor', observer: 'Observer' }[roleKey] ?? roleKey;
+  const native = await (async () => {
+    const roles = await c.rest('GET', '/api/roles', undefined, { fields: 'id,name', $top: '50' }).catch(() => null);
+    const role = Array.isArray(roles) ? roles.find((r) => r.name === roleName) : null;
+    if (!role) return false;
+    const projects = await c.rest('GET', '/api/admin/projects', undefined, { fields: 'id,name', $top: '200' });
+    const project = Array.isArray(projects) ? projects.find((p) => p.name === projectName) : null;
+    if (!project) return false;
+    const userId = await resolveUserId(c, login);
+    if (!userId) return false;
+    // Idempotency: an existing identical grant makes the POST fail — check first.
+    const existing = await c
+      .rest('GET', '/api/assignedRoles', undefined, {
+        fields: 'id,role(id),holder(id),scope(project(id))',
+        $top: '500',
+      })
+      .catch(() => null);
+    if (
+      Array.isArray(existing) &&
+      existing.some(
+        (a) =>
+          a.role?.id === role.id &&
+          a.holder?.id === userId &&
+          a.scope?.project?.id === project.id,
+      )
+    ) {
+      return true;
+    }
+    return c
+      .rest('POST', '/api/assignedRoles', {
+        $type: 'AssignedRole',
+        scope: { project: { id: project.id }, $type: 'ProjectScope' },
+        holder: { id: userId, $type: 'User' },
+        role: { id: role.id },
+      }, { fields: 'id' })
+      .then(() => true)
+      .catch(() => false); // pre-2026 server without the resource
+  })();
+  if (native) return;
+
+  // Hub fallback (≤2025.x).
   const users = await c.rest('GET', '/hub/api/rest/users', undefined, { query: login, fields: 'id,login' }, c.HUB_H);
   const hubUser = users?.users?.find((u) => u.login === login);
   if (!hubUser) throw new Error(`Hub user not found: ${login}`);
@@ -407,7 +481,7 @@ export async function seedBacklogIssues(c, projectId, specs) {
 export async function seedProject(c, spec, log = () => {}) {
   const projectId = await ensureProject(c, spec.name, spec.key);
   if (spec.projectMembers?.length) {
-    const added = await addProjectTeamMembers(c, spec.name, spec.projectMembers);
+    const added = await addProjectTeamMembers(c, spec.name, spec.projectMembers, projectId);
     log(`${spec.key}: project team members ${added.join(', ') || '(none added)'}`);
   }
   const origId = await ensurePeriodField(c, 'Original Effort');

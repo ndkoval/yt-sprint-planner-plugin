@@ -122,8 +122,13 @@ test.describe('Install & configure', () => {
     await settle(page, 800);
     await humanClick(page, sf.getByRole('button', { name: /Erin Park/ }).first());
     await settle(page, 700);
-    await cap.say('Set a part-time allocation and their capacity scales to match — Erin at sixty percent.');
+    // Speak WHILE the edit happens so "sixty percent" lands as the 60 appears
+    // (saying first left the field showing 100 for the whole caption).
+    const allocationLine = cap.say(
+      'Set a part-time allocation and their capacity scales to match — Erin at sixty percent.',
+    );
     await humanFill(page, sf.getByLabel(/Allocation for Erin Park/i), '60');
+    await allocationLine;
     await settle(page, 900);
 
     // 8. Creating a whole new team is one click + a name (it starts from the first

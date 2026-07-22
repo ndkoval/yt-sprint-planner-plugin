@@ -15,6 +15,7 @@ import {
   humanFill,
   moveTo,
   settle,
+  veiledNavigation,
 } from './helpers.js';
 
 /**
@@ -53,9 +54,15 @@ test.describe('Multiple projects', () => {
     await moveTo(page, agp.getByText(/Platform \d{4}-S\d+/).first());
     await settle(page, 900);
 
-    // 2. Jump to the second project — navigate FIRST, describe once Orbit is visible.
+    // 2. Jump to the second project — under a branded VEIL (the platform's white
+    // loading flash must never reach the recording), describe once Orbit is visible.
     await cap.say('Now hop to a second project.');
-    const orb = await openProjectApp(page, 'Sprint Capacity', { projectKey: SECOND_PROJECT_KEY });
+    await veiledNavigation(page, () =>
+      page.goto(`/projects/${SECOND_PROJECT_KEY}?tab=sprint-capacity-planner%3ASprint+Capacity`, {
+        waitUntil: 'domcontentloaded',
+      }),
+    );
+    const orb = await appFrame(page);
     await expect(orb.getByText('Raw capacity')).toBeVisible();
     await moveTo(page, orb.getByText(/Orbit \d{4}-S\d+/).first());
     await cap.say('Orbit CRM is a different world — one small team on one-week Sprints.');
@@ -107,10 +114,12 @@ test.describe('Multiple projects', () => {
     await settle(page, 900);
 
     // Back to AppGlass — deep-link STRAIGHT to the planner tab (no confusing hop
-    // through the Apps admin list mid-claim).
-    await page.goto(`/projects/${PROJECT_KEY}?tab=sprint-capacity-planner%3ASprint+Capacity`, {
-      waitUntil: 'domcontentloaded',
-    });
+    // through the Apps admin list mid-claim), under the branded veil again.
+    await veiledNavigation(page, () =>
+      page.goto(`/projects/${PROJECT_KEY}?tab=sprint-capacity-planner%3ASprint+Capacity`, {
+        waitUntil: 'domcontentloaded',
+      }),
+    );
     const agpAgain = await appFrame(page);
     await expect(agpAgain.getByText('Capacity — Platform', { exact: true })).toBeVisible();
     await moveTo(page, agpAgain.getByText('Capacity — Platform', { exact: true }));
