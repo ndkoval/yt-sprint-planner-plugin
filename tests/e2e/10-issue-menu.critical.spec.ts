@@ -45,5 +45,16 @@ test.describe('issue options menu', () => {
     // Scoped to SCPE1: the capacity section is present, and (multi-team) names a team.
     await expect(frame.locator('[data-test="scp-capacity-section"]')).toBeVisible();
     await expect(frame.locator('[data-test="scp-capacity-section"] h2')).toContainText('Capacity');
+
+    // A managed Sprint is auto-selected (the planner opens on a real Sprint, not empty).
+    await expect(frame.getByRole('combobox', { name: 'Select a Sprint' })).not.toBeEmpty();
+
+    // NOTHING OVERFLOWS the narrow dialog: the widget content must fit the dialog
+    // viewport (the wide capacity table scrolls within its own card, not the widget).
+    const fits = await frame.evaluate(() => {
+      const root = document.querySelector('[data-test="scp-ready"]') as HTMLElement | null;
+      return root !== null && root.scrollWidth <= document.documentElement.clientWidth + 2;
+    });
+    expect(fits, 'the planner must not overflow the issue-menu dialog width').toBeTruthy();
   });
 });

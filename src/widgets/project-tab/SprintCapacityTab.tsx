@@ -13,6 +13,7 @@ import { daysToMinutes } from '../../shared/units';
 import {
   firstSprintDates,
   nextSprintDates,
+  pickRelevantSprint,
   renderSprintName,
   teamMemberLogins,
   utcMsToIso,
@@ -283,8 +284,7 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
       const requested = params.get('sprint');
       const preferred =
         (requested !== null && list.find((s) => s.id === requested)) ||
-        list.find((s) => !s.archived && s.managed) ||
-        list[0] ||
+        pickRelevantSprint(list, utcMsToIso(Date.now())) ||
         null;
       const priorId = selectedIdRef.current;
       const nextId = priorId !== null && list.some((s) => s.id === priorId)
@@ -346,7 +346,7 @@ export function SprintCapacityTab({ client }: SprintCapacityTabProps): React.JSX
         try {
           const list = await client.listSprints(teamId);
           setSprints(list);
-          const preferred = list.find((s) => !s.archived && s.managed) ?? list[0] ?? null;
+          const preferred = pickRelevantSprint(list, utcMsToIso(Date.now()));
           selectedIdRef.current = preferred?.id ?? null;
           setSelectedId(preferred?.id ?? null);
           if (preferred) await loadSprint(preferred.id, true, teamId);

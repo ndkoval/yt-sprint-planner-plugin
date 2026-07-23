@@ -4,11 +4,12 @@
  * sourced from the latest recording automatically.
  *
  * Produces:
- *   docs/media/demo.mp4            all reels concatenated (install → walkthrough → multi-project)
+ *   docs/media/demo.mp4            all reels concatenated (install → walkthrough → multi-project → issue-launch)
  *   docs/media/demo-poster.png     a poster frame (the planning board) for the README thumbnail
  *   docs/media/install.mp4         reel #1 on its own
  *   docs/media/walkthrough.mp4     reel #2 on its own
  *   docs/media/multi-project.mp4   reel #3 on its own
+ *   docs/media/issue-launch.mp4    reel #4 on its own
  *
  * Requires ffmpeg. Run after `npm run demo:record:docker` (or `npm run demo`). Degrades with a
  * clear message if the reels or ffmpeg are missing.
@@ -28,6 +29,7 @@ const REELS = [
   { src: '01-setup.mp4', out: 'install.mp4' },
   { src: '02-walkthrough.mp4', out: 'walkthrough.mp4' },
   { src: '03-multi-project.mp4', out: 'multi-project.mp4' },
+  { src: '04-issue-launch.mp4', out: 'issue-launch.mp4' },
 ];
 
 async function exists(p) {

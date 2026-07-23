@@ -115,13 +115,16 @@ test.describe('Install & configure', () => {
     await cap.say('Now Mobile’s card.');
     await settle(page, 500);
     await moveTo(page, mobileCard.getByText('Members — Mobile', { exact: true }));
-    await cap.say('Each team picks its own members — add Erin, right here under Mobile.');
+    await cap.say('Each team picks its own members — open the picker under Mobile.');
     await humanClick(page, mobileCard.getByRole('combobox', { name: 'Add a team member…' }));
-    await settle(page, 500);
+    await settle(page, 400);
     await humanFill(page, sf.getByRole('textbox', { name: 'Filter items' }), 'Erin');
-    await settle(page, 800);
-    await humanClick(page, sf.getByRole('button', { name: /Erin Park/ }).first());
-    await settle(page, 700);
+    // Narrate ACROSS the option-appear + click so there is never a silent static
+    // stretch even if the user-directory search is slow in the recorder.
+    const pickLine = cap.say('Find Erin in the directory and add her.');
+    await sf.getByRole('button', { name: /Erin Park/ }).first().click();
+    await pickLine;
+    await settle(page, 400);
     // Speak WHILE the edit happens so "sixty percent" lands as the 60 appears
     // (saying first left the field showing 100 for the whole caption).
     const allocationLine = cap.say(

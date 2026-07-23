@@ -12,7 +12,7 @@ A YouTrack App that adds **capacity planning, computed delivery metrics, and a o
 
 [![Watch the demo](docs/media/demo-poster.png)](docs/media/demo.mp4)
 
-**▶ [Watch the demo](docs/media/demo.mp4)** — add the app to a project and configure it (including splitting a big project into small teams), plan a Sprint per team on the drag-and-drop board, and see two projects planned independently side by side. Also available separately: **[install & configure](docs/media/install.mp4)** · **[walkthrough](docs/media/walkthrough.mp4)** · **[multiple projects](docs/media/multi-project.mp4)**. The videos are recorded automatically against a real YouTrack.
+**▶ [Watch the demo](docs/media/demo.mp4)** — add the app to a project and configure it (including splitting a big project into small teams), plan a Sprint per team on the drag-and-drop board, and see two projects planned independently side by side. Also available separately: **[install & configure](docs/media/install.mp4)** · **[walkthrough](docs/media/walkthrough.mp4)** · **[multiple projects](docs/media/multi-project.mp4)** · **[open from an issue](docs/media/issue-launch.mp4)**. The videos are recorded automatically against a real YouTrack.
 
 > 📦 **JetBrains Marketplace:** _listing coming soon._
 
@@ -27,6 +27,7 @@ A YouTrack App that adds **capacity planning, computed delivery metrics, and a o
 - **Learned Focus Factor** — observed per completed Sprint and calibrated per team.
 - **One-click next Sprint** — created per team on the team's own board: computed name, dates, sequence, seeded capacity, and optional carry-over.
 - **Sprint-field mirroring** — teams that also track Sprints in an enum custom field keep it in sync automatically: pulling an issue into the Sprint (assigned or unassigned) sets the field to the Sprint's name, dropping it back to the backlog clears it, and carry-over rewrites it to the new Sprint.
+- **Open from anywhere** — every issue's ⋯ options menu has a **Sprint Planner** item that opens the planner in place, scoped to that issue's project and its active Sprint.
 - **No custom permission scheme** — whoever can change the project's settings in YouTrack (`UPDATE_PROJECT`) manages its planning; members edit their own availability, from the settings tab or the global **Sprint Capacity Planner** menu item.
 - **Manager diagnostics + export/import** — a data-health view and a versioned JSON backup bundle (old bundles import across schema upgrades).
 
@@ -60,7 +61,7 @@ Requires YouTrack **2024.3+** (Cloud or Server).
 
 ## Status
 
-**v0.4.0+:** teams are now fully separated — every planning setting (board, cadence, effort fields, backlog, reminders, optional Sprint-mirror field) belongs to a team, implemented across the domain, backend, widgets and the reminder workflow, with existing v2/v3 data migrated automatically on read. Verified end-to-end against a real YouTrack **2026.2** (previously 2025.3): 275 unit + 101 contract tests, the full 36-test Playwright E2E suite — including a platform spec that pins the exact YouTrack version each run verified, and a spec that opens the planner from an issue's ⋯ menu — and the three demo reels recorded against it. Note: since YouTrack **2026.1** the project-settings pages are served to project admins only, so team members reach the planner through the global **Sprint Capacity Planner** menu item (through 2025.x the settings tab also rendered read-only for members). Known limitations are tracked as [`known-limitation`](https://github.com/ndkoval/yt-sprint-planner-plugin/issues?q=is%3Aissue+label%3Aknown-limitation) issues.
+**v0.4.0+:** teams are now fully separated — every planning setting (board, cadence, effort fields, backlog, reminders, optional Sprint-mirror field) belongs to a team, implemented across the domain, backend, widgets and the reminder workflow, with existing v2/v3 data migrated automatically on read. Verified end-to-end against a real YouTrack **2026.2** (previously 2025.3): 283 unit + 101 contract tests, the full 36-test Playwright E2E suite — including a platform spec that pins the exact YouTrack version each run verified, and a spec that opens the planner from an issue's ⋯ menu — and the four demo reels recorded against it. Note: since YouTrack **2026.1** the project-settings pages are served to project admins only, so team members reach the planner through the global **Sprint Capacity Planner** menu item (through 2025.x the settings tab also rendered read-only for members). Known limitations are tracked as [`known-limitation`](https://github.com/ndkoval/yt-sprint-planner-plugin/issues?q=is%3Aissue+label%3Aknown-limitation) issues.
 
 ## Contributing
 

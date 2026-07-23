@@ -8,6 +8,7 @@ export * from './effort/effort.js';
 export * from './focus-factor/focus-factor.js';
 export * from './metrics/metrics.js';
 export * from './sprint/naming.js';
+export * from './sprint/select.js';
 export * from './teams/teams.js';
 export * from './permissions/permissions.js';
 export * from './migrations/migrations.js';

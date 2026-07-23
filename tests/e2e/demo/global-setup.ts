@@ -57,18 +57,28 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
     }
   }
 
-  // Save an authenticated admin session for the journeys.
+  // Save an authenticated admin session for the journeys. Same robust flow as
+  // tests/e2e/auth.setup.ts: locator-based (no stale page.$ handles), let the
+  // 2026.x silent-SSO redirect (…?request_credentials=skip) settle, submit, wait a
+  // flat beat for the OAuth-callback chain, and retry — a URL-predicate/detached
+  // wait raced the bounce and once saved an UNAUTHENTICATED storageState (every
+  // reel then failed). Confirm authenticated before saving.
   const browser = await chromium.launch();
   const page = await browser.newPage();
-  await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(2000);
-  const user = (await page.$('input#username')) ?? (await page.$('input[type=text]'));
-  if (user) {
+  const onLogin = (u: string): boolean => /\/hub\/auth\/login|[?&]login|\/login\b/i.test(u);
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(2500);
+    if (!onLogin(page.url())) break;
+    const user = page.locator('input#username, input[type=text]').first();
+    if (!(await user.waitFor({ state: 'visible', timeout: 15_000 }).then(() => true).catch(() => false))) continue;
     await user.fill(USER);
-    await (await page.$('input[type=password]'))!.fill(PASS);
-    await (await page.$('button[type=submit]'))!.click();
-    await page.waitForTimeout(4500);
+    await page.locator('input[type=password]').first().fill(PASS);
+    await page.locator('button[type=submit]').first().click();
+    await page.waitForTimeout(7000);
+    if (!onLogin(page.url())) break;
   }
+  if (onLogin(page.url())) throw new Error('demo global-setup could not authenticate the admin session');
   // Dismiss the platform's first-run onboarding OFF-CAMERA (2026.x shows a
   // "Welcome! Let's get started" tour panel with a JetBrains AI promo on project
   // pages) so it never appears in a reel. Both dismissals persist in the profile.

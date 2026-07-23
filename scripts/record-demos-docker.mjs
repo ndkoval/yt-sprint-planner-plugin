@@ -63,13 +63,17 @@ run('node', ['scripts/trust-redirect-host.mjs']);
 // command so its exit status becomes the container's — a failure exits cleanly, never hangs.
 // `playwright install chromium` is a fast no-op when the image already has the matching
 // browser, and self-heals a version drift between the image and the installed Playwright.
+// Optional: re-record ONE reel only (e.g. DEMO_GREP='Launch from an issue'). The other
+// reels' webms already in artifacts/demo/reels are re-voiced unchanged by render-reels, and
+// publish re-concatenates all four — so a one-reel fix doesn't require a full 4-reel re-record.
+const GREP = process.env.DEMO_GREP ? ` --grep ${JSON.stringify(process.env.DEMO_GREP)}` : '';
 const inner = [
   '[ -x node_modules/.bin/playwright ] || npm ci --no-audit --no-fund || exit 1',
   'npx playwright install chromium >/dev/null 2>&1 || true',
   'Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -ac >/tmp/xvfb.log 2>&1 &',
   'export DISPLAY=:99',
   'for i in $(seq 1 40); do [ -e /tmp/.X11-unix/X99 ] && break; sleep 0.25; done',
-  'npx playwright test --config playwright.demo.config.ts; rc=$?',
+  `npx playwright test --config playwright.demo.config.ts${GREP}; rc=$?`,
   // The container runs as root, so whatever it wrote under artifacts/ is root-owned on the host
   // bind mount — the host-side render-reels (a non-root user on Linux/CI) then can't create
   // artifacts/demo/reels. Hand artifacts/ back to the repo's owner before exiting (a no-op on

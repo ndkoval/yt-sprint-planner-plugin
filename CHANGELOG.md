@@ -4,6 +4,18 @@ All notable changes to the Sprint Capacity Planner are documented here. The form
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-07-23
+
+The planner opens on the active Sprint, and launching **"Sprint Planner" from an
+issue's ⋯ options menu now works** (it previously failed to load). A new demo reel
+and a video-recorded E2E spec cover the issue-menu path end to end on YouTrack 2026.2.
+
+### Added
+
+- **The planner opens on the ACTIVE Sprint.** Every entry point now selects the
+  Sprint whose dates contain today (else the latest managed, else the first),
+  instead of the first non-archived one in board order (`pickRelevantSprint`).
+
 ### Fixed
 
 - **"Sprint Planner" from an issue's ⋯ menu now loads** (the `ISSUE_OPTIONS_MENU_ITEM`
@@ -11,7 +23,16 @@ All notable changes to the Sprint Capacity Planner are documented here. The form
   mistook the issue id for a project id (`GET /admin/projects/{issueId}` → 404 →
   "Unable to load"). It now resolves the issue's project first
   (`getIssueProject`), falling back to project-id resolution for the other
-  placements. Covered by a new video-recorded e2e spec (`10-issue-menu`).
+  placements. Covered by a video-recorded e2e spec (`10-issue-menu`) and a
+  dedicated demo reel (`04-issue-launch`).
+- **The capacity table no longer clips in a narrow host.** In the issue-menu
+  dialog (~600 px) the extra columns (Remaining / Note / Last updated) were cut off
+  the right with no way to reach them; the table now scrolls horizontally within its
+  own card so the widget itself always fits its host.
+- **Login setup hardened for 2026.x** (test infra): the auth/demo login used stale
+  `page.$` handles and a URL/detached wait that raced the silent-SSO redirect —
+  once hanging a setup for ~an hour and once saving an unauthenticated demo session.
+  Now locator-based with a settle-and-retry that mirrors the proven manual flow.
 
 ## [0.4.1] — 2026-07-22
 

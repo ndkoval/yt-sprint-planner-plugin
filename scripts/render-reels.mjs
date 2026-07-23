@@ -52,6 +52,7 @@ const DEFAULT_REELS = [
   { vtt: '01-setup', dir: '01-setup', title: 'Install & configure' },
   { vtt: '02-walkthrough', dir: '02-walkthrough', title: 'App walkthrough' },
   { vtt: '03-multi-project', dir: '03-multi-project', title: 'Multiple projects' },
+  { vtt: '04-issue-launch', dir: '04-issue-launch', title: 'Launch from an issue' },
 ];
 const REELS = process.env.REELS_JSON ? JSON.parse(process.env.REELS_JSON) : DEFAULT_REELS;
 

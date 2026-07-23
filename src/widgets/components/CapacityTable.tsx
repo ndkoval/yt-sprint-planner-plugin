@@ -62,10 +62,14 @@ export function CapacityTable({
   const canEdit = (row: CapacityRow): boolean => isManager || row.userId === currentUserId;
 
   return (
-    <table
-      style={{ width: '100%', borderCollapse: 'collapse', font: 'var(--ring-font)' }}
-      aria-label="Sprint capacity by participant"
-    >
+    // Scroll the wide table horizontally instead of forcing the whole widget wide:
+    // in a narrow host (the issue ⋯-menu dialog is ~600px) the Remaining/Note/Last
+    // updated columns were clipped off the right with no way to reach them.
+    <div style={{ overflowX: 'auto' }}>
+      <table
+        style={{ width: '100%', minWidth: 640, borderCollapse: 'collapse', font: 'var(--ring-font)' }}
+        aria-label="Sprint capacity by participant"
+      >
       <thead>
         <tr>
           <th style={headStyle} scope="col">
@@ -217,6 +221,7 @@ export function CapacityTable({
           );
         })}
       </tbody>
-    </table>
+      </table>
+    </div>
   );
 }
