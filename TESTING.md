@@ -53,7 +53,14 @@ Seeded boards are created with **project-based sharing** (`ensureBoard` in [`scr
 
 **Personas** ([`fixtures/personas.ts`](tests/e2e/fixtures/personas.ts), storage states materialised by [`auth.setup.ts`](tests/e2e/auth.setup.ts)): `manager` (admin, project leader of both = manager), `alice` (One/Alpha member), `bob` (One/Beta + Two member; also seeded as a non-leader project admin of Two — the granted-`UPDATE_PROJECT` manager case), `eve` (authenticated, **no** project role).
 
-**Capture policy** ([`playwright.config.ts`](playwright.config.ts)): `*.critical.spec.ts` record video/trace/screenshot always; `*.regression.spec.ts` retain on failure only. Reports → `artifacts/playwright-report/`; traces/videos → `artifacts/test-results/`. The [`axe fixture`](tests/e2e/fixtures/axe.ts) fails a test on serious/critical WCAG 2 A/AA violations. Specs verify backend state over REST with the admin token ([`fixtures/rest.ts`](tests/e2e/fixtures/rest.ts)) when it is available.
+Every extension-point entry to the planner is covered: the project-settings tab
+(`02`, `05`, …), the global main-menu item (`08-project-memory`), and the issue
+`⋯` options menu (`10-issue-menu` — opens "Sprint Planner" from an issue and
+asserts the planner loads scoped to that issue's project; regression guard for the
+issue-id-mistaken-for-project-id bug). The `00-platform` spec pins the verified
+YouTrack version.
+
+**Capture policy** ([`playwright.config.ts`](playwright.config.ts)): `*.critical.spec.ts` record video/trace/screenshot always (the trace carries a full frame screencast); `*.regression.spec.ts` retain on failure only. Reports → `artifacts/playwright-report/`; traces/videos → `artifacts/test-results/`. The [`axe fixture`](tests/e2e/fixtures/axe.ts) fails a test on serious/critical WCAG 2 A/AA violations. Specs verify backend state over REST with the admin token ([`fixtures/rest.ts`](tests/e2e/fixtures/rest.ts)) when it is available.
 
 ```bash
 npm run test:e2e

@@ -2,6 +2,17 @@
 
 All notable changes to the Sprint Capacity Planner are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **"Sprint Planner" from an issue's ⋯ menu now loads** (the `ISSUE_OPTIONS_MENU_ITEM`
+  entry point). The host entity there is the ISSUE, not its project; the planner
+  mistook the issue id for a project id (`GET /admin/projects/{issueId}` → 404 →
+  "Unable to load"). It now resolves the issue's project first
+  (`getIssueProject`), falling back to project-id resolution for the other
+  placements. Covered by a new video-recorded e2e spec (`10-issue-menu`).
+
 ## [0.4.1] — 2026-07-22
 
 Verified on the newest YouTrack; platform-compat and polish.

@@ -20,6 +20,16 @@ async function call(path: string, query: Record<string, string> = {}): Promise<u
   return res.json();
 }
 
+/** The readable id of any issue in a project (for the issue-page entry point). */
+export async function firstIssueId(projectKey: string): Promise<string | null> {
+  const issues = (await call('api/issues', {
+    query: `project: ${projectKey}`,
+    fields: 'idReadable',
+    $top: '1',
+  })) as Array<{ idReadable: string }>;
+  return Array.isArray(issues) && issues.length > 0 ? issues[0].idReadable : null;
+}
+
 /** Native sprints of a board: [{id, name}]. */
 export async function boardSprints(boardId: string): Promise<Array<{ id: string; name: string }>> {
   const s = (await call(`api/agiles/${boardId}/sprints`, { fields: 'id,name', $top: '100' })) as Array<{

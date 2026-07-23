@@ -119,21 +119,38 @@ export class ApiClient {
     if (this.projectRef !== null) return this.projectRef;
     const entity = this.host.entity;
     const fromProject = entity?.project;
-    const id =
-      (typeof fromProject?.id === 'string' && fromProject.id.length > 0 ? fromProject.id : null) ??
-      (typeof entity?.id === 'string' && entity.id.length > 0 ? entity.id : null) ??
-      new URLSearchParams(window.location.search).get('projectId');
+    // 1. The host handed us the project directly (PROJECT_SETTINGS, or an issue
+    //    entity that carries its project).
+    if (typeof fromProject?.id === 'string' && fromProject.id.length > 0) {
+      const key =
+        typeof fromProject.shortName === 'string' && fromProject.shortName.length > 0
+          ? fromProject.shortName
+          : (await this.yt.getProject(fromProject.id)).key;
+      this.projectRef = { id: fromProject.id, key };
+      return this.projectRef;
+    }
+    const entityId =
+      typeof entity?.id === 'string' && entity.id.length > 0 ? entity.id : null;
+    // 2. The entity is an ISSUE (ISSUE_OPTIONS_MENU_ITEM) with no project attached —
+    //    the id is the issue's, NOT a project's. Resolve the issue's project first;
+    //    only if that fails do we treat the id as a project id (dashboard ?projectId,
+    //    PROJECT_SETTINGS without shortName).
+    if (entityId !== null && !(typeof entity?.shortName === 'string' && entity.shortName.length > 0)) {
+      const viaIssue = await this.yt.getIssueProject(entityId);
+      if (viaIssue !== null) {
+        this.projectRef = { id: viaIssue.id, key: viaIssue.key };
+        return this.projectRef;
+      }
+    }
+    // 3. Fall back to treating the id (entity or ?projectId) as a project id.
+    const id = entityId ?? new URLSearchParams(window.location.search).get('projectId');
     if (id === null || id.length === 0) {
       throw new Error('Unable to resolve the current project from the YouTrack host.');
     }
     const key =
-      (typeof fromProject?.shortName === 'string' && fromProject.shortName.length > 0
-        ? fromProject.shortName
-        : null) ??
-      (typeof entity?.shortName === 'string' && entity.shortName.length > 0
+      typeof entity?.shortName === 'string' && entity.shortName.length > 0
         ? entity.shortName
-        : null) ??
-      (await this.yt.getProject(id)).key;
+        : (await this.yt.getProject(id)).key;
     this.projectRef = { id, key };
     return this.projectRef;
   }

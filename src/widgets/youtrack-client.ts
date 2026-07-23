@@ -144,6 +144,23 @@ export class NativeYouTrack {
   }
 
   /**
+   * The PROJECT of an issue (by internal or readable id) — used when the host entity
+   * is an ISSUE (the ISSUE_OPTIONS_MENU_ITEM placement) and doesn't carry its project.
+   * Returns null when the id is not an issue (so the caller can fall back to treating
+   * it as a project id).
+   */
+  async getIssueProject(issueId: string): Promise<{ id: string; key: string; name: string } | null> {
+    const i = await this.get(`issues/${encodeURIComponent(issueId)}`, {
+      fields: 'project(id,shortName,name)',
+    }).catch(() => null);
+    const project = pick(i, 'project');
+    const id = pick(project, 'id');
+    const key = pick(project, 'shortName');
+    if (typeof id !== 'string' || typeof key !== 'string' || id.length === 0) return null;
+    return { id, key, name: String(pick(project, 'name') ?? key) };
+  }
+
+  /**
    * Projects VISIBLE TO THE CURRENT USER (the endpoint filters by permission —
    * verified on 2025.3 with a regular member). Used by the main-menu placement's
    * project picker, where the host provides no project context.
